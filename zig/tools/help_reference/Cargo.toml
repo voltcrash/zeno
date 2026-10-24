@@ -1,0 +1,16 @@
+# Renders help text with the Rust `deno_cli_parser` sources so the Zig port
+# can be checked against it. Only the dependency-free modules are compiled,
+# which avoids building deno_runtime and V8.
+#
+#   cargo run --manifest-path zig/tools/help_reference/Cargo.toml > zig/src/cli/golden/root_help.txt
+
+[package]
+name = "zig_help_reference"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
