@@ -1,0 +1,12 @@
+.{
+    .name = .deno,
+    .version = "2.9.8",
+    .fingerprint = 0xfd6f8c63038d8fd9,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
