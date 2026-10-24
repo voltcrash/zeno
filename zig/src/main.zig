@@ -3,14 +3,12 @@
 
 const std = @import("std");
 const flags = @import("cli/flags.zig");
-const defs = @import("cli/defs.zig");
 const help = @import("cli/help.zig");
 const version = @import("version.zig");
 
 pub fn main(init: std.process.Init) !u8 {
     const io = init.io;
     const argv = try init.minimal.args.toSlice(init.arena.allocator());
-    const args = if (argv.len > 0) argv[1..] else argv;
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &stdout_buf);
@@ -19,17 +17,20 @@ pub fn main(init: std.process.Init) !u8 {
     var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
     const err = &stderr.interface;
 
-    var diag: flags.Diagnostic = .{};
-    const parsed = flags.parse(args, &diag) catch {
-        try diag.print(err);
-        try err.flush();
-        return 1;
+    var diag: flags.CliError = undefined;
+    const parsed = flags.parse(init.arena.allocator(), argv, &diag) catch |e| switch (e) {
+        error.OutOfMemory => return e,
+        error.InvalidArgs => {
+            try err.print("{f}\n", .{diag});
+            try err.flush();
+            return 1;
+        },
     };
 
     const code: u8 = switch (parsed.action) {
         .version_short => printStdout(out, version.render, .{false}),
         .version_long => printStdout(out, version.render, .{true}),
-        .help => |cmd| printStdout(out, help.render, .{cmd orelse &defs.root}),
+        .help => |cmd| printStdout(out, help.render, .{cmd}),
         .subcommand => |cmd| try notPorted(err, cmd.name),
         .default_run => try notPorted(err, "run"),
         .default_repl => try notPorted(err, "repl"),
@@ -58,6 +59,7 @@ fn notPorted(err: *std.Io.Writer, name: []const u8) !u8 {
 test {
     std.testing.refAllDecls(@This());
     _ = flags;
+    _ = @import("cli/parse.zig");
     _ = help;
     _ = version;
 }

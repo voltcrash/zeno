@@ -1,0 +1,2463 @@
+> ["deno","run","script.ts"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","-A","script.ts"]
+subcommand run
+arg allow-all present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-read=/etc,/var","--allow-net=localhost:8080","script.ts"]
+subcommand run
+arg allow-read present=true count=1 ["/etc","/var"]
+arg allow-net present=true count=1 ["localhost:8080"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-read","--allow-write","script.ts"]
+subcommand run
+arg allow-read present=true count=1 []
+arg allow-write present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","script.ts","arg1","--flag","arg2"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["arg1","--flag","arg2"]
+> ["deno","run","script.ts","--","arg1","--flag"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["--","arg1","--flag"]
+> ["deno","run","--","-echo.ts","arg1"]
+subcommand run
+arg script_arg present=true count=1 ["-echo.ts"]
+trailing ["arg1"]
+> ["deno","run","--","-echo.ts","--","--flag"]
+subcommand run
+arg script_arg present=true count=1 ["-echo.ts"]
+trailing ["--","--flag"]
+> ["deno","--log-level","debug","--quiet","run","script.ts"]
+subcommand run
+arg log-level present=true count=1 ["debug"]
+arg quiet present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--log-level","debug","--quiet","script.ts"]
+subcommand run
+arg log-level present=true count=1 ["debug"]
+arg quiet present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","upgrade","--dry-run","--force"]
+subcommand upgrade
+arg dry-run present=true count=1 []
+arg force present=true count=1 []
+> ["deno","upgrade","canary"]
+subcommand upgrade
+arg version-or-hash-or-channel present=true count=1 ["canary"]
+> ["deno","run","--reload","script.ts"]
+subcommand run
+arg reload present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=http://example.com,http://foo.com","script.ts"]
+subcommand run
+arg reload present=true count=1 ["http://example.com","http://foo.com"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch","script.ts"]
+subcommand run
+arg watch present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch=src/,lib/","script.ts"]
+subcommand run
+arg watch present=true count=1 ["src/","lib/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--v8-flags=--max-old-space-size=4096,--expose-gc","script.ts"]
+subcommand run
+arg v8-flags present=true count=1 ["--max-old-space-size=4096","--expose-gc"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--seed","42","script.ts"]
+subcommand run
+arg seed present=true count=1 ["42"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--config","deno.json","script.ts"]
+subcommand run
+arg config present=true count=1 ["deno.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","-c","deno.json","script.ts"]
+subcommand run
+arg config present=true count=1 ["deno.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","fmt","file1.ts","file2.ts"]
+subcommand fmt
+arg files present=true count=1 ["file1.ts","file2.ts"]
+> ["deno","fmt","--check","file.ts"]
+subcommand fmt
+arg check present=true count=1 []
+arg files present=true count=1 ["file.ts"]
+> ["deno","fmt","--use-tabs","--line-width","120","--indent-width","4","--single-quote","--prose-wrap","always","--no-semicolons"]
+subcommand fmt
+arg use-tabs present=true count=1 []
+arg line-width present=true count=1 ["120"]
+arg indent-width present=true count=1 ["4"]
+arg single-quote present=true count=1 []
+arg prose-wrap present=true count=1 ["always"]
+arg no-semicolons present=true count=1 []
+> ["deno","lint","file.ts"]
+subcommand lint
+arg files present=true count=1 ["file.ts"]
+> ["deno","lint","--rules-include=no-var,no-eval"]
+subcommand lint
+arg rules-include present=true count=1 ["no-var","no-eval"]
+> ["deno","test"]
+subcommand test
+> ["deno","test","--filter","my_test"]
+subcommand test
+arg filter present=true count=1 ["my_test"]
+> ["deno","test","--fail-fast"]
+subcommand test
+arg fail-fast present=true count=1 []
+> ["deno","test","--fail-fast=3"]
+subcommand test
+arg fail-fast present=true count=1 ["3"]
+> ["deno","test","--shuffle"]
+subcommand test
+arg shuffle present=true count=1 []
+> ["deno","test","--shuffle=42"]
+subcommand test
+arg shuffle present=true count=1 ["42"]
+> ["deno","test","--reporter","dot"]
+subcommand test
+arg reporter present=true count=1 ["dot"]
+> ["deno","test","--watch"]
+subcommand test
+arg watch present=true count=1 []
+> ["deno","test","--watch","--no-clear-screen"]
+subcommand test
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+> ["deno","eval","console.log('hello')"]
+subcommand eval
+arg code_arg present=true count=1 ["console.log('hello')"]
+> ["deno","eval","-p","1+1"]
+subcommand eval
+arg print present=true count=1 []
+arg code_arg present=true count=1 ["1+1"]
+> ["deno","eval","--","-1; console.log(0)","arg1"]
+subcommand eval
+arg code_arg present=true count=1 ["-1; console.log(0)"]
+trailing ["arg1"]
+> ["deno","eval","--","code","--","a"]
+subcommand eval
+arg code_arg present=true count=1 ["code"]
+trailing ["--","a"]
+> ["deno","upgrade","--","v1","v2"]
+subcommand upgrade
+trailing ["v1","v2"]
+> ["deno","test","--","arg1","--flag"]
+subcommand test
+trailing ["arg1","--flag"]
+> ["deno","run","--unknown-flag","script.ts"]
+error UnknownFlag: "error: unexpected argument '--unknown-flag' found"
+> ["deno","run","--alow-read","script.ts"]
+error UnknownFlag: "error: unexpected argument '--alow-read' found\n\n  tip: a similar argument exists: '--allow-read'"
+> ["deno","run","--seed"]
+error MissingValue: "error: a value is required for '--seed' but none was supplied"
+> ["deno","script.ts"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","-A","script.ts"]
+arg allow-all present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--","-echo.ts","--","--debug"]
+arg script_arg present=true count=1 ["-echo.ts"]
+trailing ["--","--debug"]
+> ["deno","--allow-read=/tmp","script.ts"]
+arg allow-read present=true count=1 ["/tmp"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","deploy","--project=myapp","--prod"]
+subcommand deploy
+trailing ["--project=myapp","--prod"]
+> ["deno","run","-RWNE","script.ts"]
+subcommand run
+arg allow-read present=true count=1 []
+arg allow-write present=true count=1 []
+arg allow-net present=true count=1 []
+arg allow-env present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","upgrade","--rc"]
+subcommand upgrade
+arg release-candidate present=true count=1 []
+> ["deno","serve","--port","3000","server.ts"]
+subcommand serve
+arg port present=true count=1 ["3000"]
+arg script_arg present=true count=1 ["server.ts"]
+> ["deno","serve","-A","--port","8080","server.ts"]
+subcommand serve
+arg allow-all present=true count=1 []
+arg port present=true count=1 ["8080"]
+arg script_arg present=true count=1 ["server.ts"]
+> ["deno","run","--inspect","script.ts"]
+subcommand run
+arg inspect present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect=127.0.0.1:9229","script.ts"]
+subcommand run
+arg inspect present=true count=1 ["127.0.0.1:9229"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect-brk","script.ts"]
+subcommand run
+arg inspect-brk present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-check","script.ts"]
+subcommand run
+arg no-check present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-check=remote","script.ts"]
+subcommand run
+arg no-check present=true count=1 ["remote"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--import-map","import_map.json","script.ts"]
+subcommand run
+arg import-map present=true count=1 ["import_map.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-remote","script.ts"]
+subcommand run
+arg no-remote present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--lock=lock.json","script.ts"]
+subcommand run
+arg lock present=true count=1 ["lock.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--lock","script.ts"]
+subcommand run
+arg lock present=true count=1 ["script.ts"]
+> ["deno","run","--no-lock","script.ts"]
+subcommand run
+arg no-lock present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch","--watch-exclude=node_modules/,dist/","script.ts"]
+subcommand run
+arg watch present=true count=1 []
+arg watch-exclude present=true count=1 ["node_modules/","dist/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","test","-A","test_file.ts"]
+subcommand test
+arg allow-all present=true count=1 []
+arg files present=true count=1 ["test_file.ts"]
+> ["deno","run","--env-file","script.ts"]
+subcommand run
+arg env-file present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--env-file=.env.local","script.ts"]
+subcommand run
+arg env-file present=true count=1 [".env.local"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--coverage=./cov","script.ts"]
+subcommand run
+arg coverage present=true count=1 ["./cov"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-config","script.ts"]
+subcommand run
+arg no-config present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-raed","script.ts"]
+error UnknownFlag: "error: unexpected argument '--allow-raed' found\n\n  tip: a similar argument exists: '--allow-read'"
+> ["deno","task","--members","--recursive","dev"]
+error InvalidValue: "error: the argument '--members' cannot be used with '--recursive'"
+> ["deno","add","--min-dep-age=0","jsr:@std/path"]
+subcommand add
+arg min-dep-age present=true count=1 ["0"]
+arg packages present=true count=1 ["jsr:@std/path"]
+> ["deno","remove","--min-dep-age=0","@std/path"]
+subcommand remove
+arg min-dep-age present=true count=1 ["0"]
+arg packages present=true count=1 ["@std/path"]
+> ["deno","info","--min-dep-age=0","main.ts"]
+subcommand info
+arg min-dep-age present=true count=1 ["0"]
+arg file present=true count=1 ["main.ts"]
+> ["deno","run","--allow-net\r","script.ts"]
+error UnknownFlag: "error: unexpected argument '--allow-net\r' found\n\n  tip: a similar argument exists: '--allow-net'"
+> ["deno","upgrade","--output","example.txt"]
+subcommand upgrade
+arg output present=true count=1 ["example.txt"]
+> ["deno","--version"]
+arg version present=true count=1 []
+> ["deno","-V"]
+arg version present=true count=1 []
+> ["deno","run","-r","script.ts"]
+subcommand run
+arg reload present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--watch","--no-clear-screen","script.ts"]
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch-hmr","--no-clear-screen","script.ts"]
+subcommand run
+arg hmr present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--unstable-hmr","--no-clear-screen","script.ts"]
+subcommand run
+arg hmr present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch-hmr=foo.txt","--no-clear-screen","script.ts"]
+subcommand run
+arg hmr present=true count=1 ["foo.txt"]
+arg no-clear-screen present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--hmr","--watch","script.ts"]
+error InvalidValue: "error: the argument '--hmr <hmr>' cannot be used with '--watch <watch>'"
+> ["deno","watch","script.ts"]
+subcommand watch
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","watch","--watch-hmr=foo.txt","--no-clear-screen","--watch-exclude=bar.txt","script.ts"]
+subcommand watch
+arg hmr present=true count=1 ["foo.txt"]
+arg no-clear-screen present=true count=1 []
+arg watch-exclude present=true count=1 ["bar.txt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","watch","--watch-exclude=bar.txt","script.ts"]
+subcommand watch
+arg watch-exclude present=true count=1 ["bar.txt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","watch","-"]
+subcommand watch
+arg script_arg present=true count=1 ["-"]
+> ["deno","--watch=file1,file2","script.ts"]
+arg watch present=true count=1 ["file1","file2"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch","--no-clear-screen","script.ts"]
+subcommand run
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch","--watch-exclude=foo,bar","script.ts"]
+subcommand run
+arg watch present=true count=1 []
+arg watch-exclude present=true count=1 ["foo","bar"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--watch=foo,bar","--watch-exclude=baz,qux","script.ts"]
+arg watch present=true count=1 ["foo","bar"]
+arg watch-exclude present=true count=1 ["baz","qux"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--watch-hmr","script.ts"]
+subcommand run
+arg hmr present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","-r","--allow-write","script.ts"]
+subcommand run
+arg reload present=true count=1 []
+arg allow-write present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--coverage=foo","script.ts"]
+subcommand run
+arg coverage present=true count=1 ["foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--v8-flags=--help"]
+subcommand run
+arg v8-flags present=true count=1 ["--help"]
+> ["--help"]
+> ["deno","run","--v8-flags=--expose-gc,--gc-stats=1","script.ts"]
+subcommand run
+arg v8-flags present=true count=1 ["--expose-gc","--gc-stats=1"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["--expose-gc","--gc-stats=1"]
+error UnknownFlag: "error: unexpected argument '--gc-stats=1' found"
+> ["deno","run","--v8-flags=--expose-gc"]
+subcommand run
+arg v8-flags present=true count=1 ["--expose-gc"]
+> ["deno","serve","main.ts"]
+subcommand serve
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","serve","--port","5000","main.ts"]
+subcommand serve
+arg port present=true count=1 ["5000"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","serve","--port","5000","--allow-net=example.com","main.ts"]
+subcommand serve
+arg port present=true count=1 ["5000"]
+arg allow-net present=true count=1 ["example.com"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","serve","--port","5000","--allow-net","main.ts"]
+subcommand serve
+arg port present=true count=1 ["5000"]
+arg allow-net present=true count=1 []
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","--allow-read","x.ts"]
+arg allow-read present=true count=1 []
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","run","--deny-read","x.ts"]
+subcommand run
+arg deny-read present=true count=1 []
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","run","x.ts"]
+subcommand run
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","run","x.ts","--allow-read"]
+subcommand run
+arg script_arg present=true count=1 ["x.ts"]
+trailing ["--allow-read"]
+> ["deno","x.ts","--deny-read"]
+arg script_arg present=true count=1 ["x.ts"]
+trailing ["--deny-read"]
+> ["deno","run","--allow-net","gist.ts","--title","X"]
+subcommand run
+arg allow-net present=true count=1 []
+arg script_arg present=true count=1 ["gist.ts"]
+trailing ["--title","X"]
+> ["--title","X"]
+arg script_arg present=true count=1 ["X"]
+> ["deno","run","--allow-all","gist.ts"]
+subcommand run
+arg allow-all present=true count=1 []
+arg script_arg present=true count=1 ["gist.ts"]
+> ["deno","run","--allow-read","gist.ts"]
+subcommand run
+arg allow-read present=true count=1 []
+arg script_arg present=true count=1 ["gist.ts"]
+> ["deno","run","-RNESWI","gist.ts"]
+subcommand run
+arg allow-read present=true count=1 []
+arg allow-net present=true count=1 []
+arg allow-env present=true count=1 []
+arg allow-sys present=true count=1 []
+arg allow-write present=true count=1 []
+arg allow-import present=true count=1 []
+arg script_arg present=true count=1 ["gist.ts"]
+> ["deno","--deny-read","gist.ts"]
+arg deny-read present=true count=1 []
+arg script_arg present=true count=1 ["gist.ts"]
+> ["deno","run","--allow-write","script.ts","--","-D","--allow-net"]
+subcommand run
+arg allow-write present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["--","-D","--allow-net"]
+> ["--","-D","--allow-net"]
+error UnknownFlag: "error: unexpected argument '-D' found"
+> ["deno","fmt","script_1.ts","script_2.ts"]
+subcommand fmt
+arg files present=true count=1 ["script_1.ts","script_2.ts"]
+> ["deno","fmt","--permit-no-files","--check"]
+subcommand fmt
+arg permit-no-files present=true count=1 []
+arg check present=true count=1 []
+> ["deno","fmt"]
+subcommand fmt
+> ["deno","fmt","--watch"]
+subcommand fmt
+arg watch present=true count=1 []
+> ["deno","fmt","--watch","--no-clear-screen","--unstable-css","--unstable-html","--unstable-component","--unstable-yaml","--unstable-sql"]
+subcommand fmt
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg unstable-css present=true count=1 []
+arg unstable-html present=true count=1 []
+arg unstable-component present=true count=1 []
+arg unstable-yaml present=true count=1 []
+arg unstable-sql present=true count=1 []
+> ["deno","fmt","--check","--watch","foo.ts","--ignore=bar.js"]
+subcommand fmt
+arg check present=true count=1 []
+arg watch present=true count=1 []
+arg files present=true count=1 ["foo.ts"]
+arg ignore present=true count=1 ["bar.js"]
+> ["deno","fmt","--config","deno.jsonc"]
+subcommand fmt
+arg config present=true count=1 ["deno.jsonc"]
+> ["deno","fmt","--config","deno.jsonc","--watch","foo.ts"]
+subcommand fmt
+arg config present=true count=1 ["deno.jsonc"]
+arg watch present=true count=1 []
+arg files present=true count=1 ["foo.ts"]
+> ["deno","fmt","--use-tabs","--line-width","60","--indent-width","4","--single-quote","--prose-wrap","never","--no-semicolons"]
+subcommand fmt
+arg use-tabs present=true count=1 []
+arg line-width present=true count=1 ["60"]
+arg indent-width present=true count=1 ["4"]
+arg single-quote present=true count=1 []
+arg prose-wrap present=true count=1 ["never"]
+arg no-semicolons present=true count=1 []
+> ["deno","fmt","--use-tabs=false","--single-quote=false","--no-semicolons=false"]
+subcommand fmt
+arg use-tabs present=true count=1 ["false"]
+arg single-quote present=true count=1 ["false"]
+arg no-semicolons present=true count=1 ["false"]
+> ["deno","fmt","--no-editorconfig"]
+subcommand fmt
+arg no-editorconfig present=true count=1 []
+> ["deno","fmt","--ext","html"]
+error MissingRequired: "error: the following required arguments were not provided: --files"
+> ["deno","fmt","--ext","html","./**"]
+subcommand fmt
+arg ext present=true count=1 ["html"]
+arg files present=true count=1 ["./**"]
+> ["deno","lint","script_1.ts","script_2.ts"]
+subcommand lint
+arg files present=true count=1 ["script_1.ts","script_2.ts"]
+> ["deno","lint","--permit-no-files","--allow-import","--watch","script_1.ts","script_2.ts"]
+subcommand lint
+arg permit-no-files present=true count=1 []
+arg allow-import present=true count=1 []
+arg watch present=true count=1 []
+arg files present=true count=1 ["script_1.ts","script_2.ts"]
+> ["deno","lint","--watch","--no-clear-screen","script_1.ts","script_2.ts"]
+subcommand lint
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg files present=true count=1 ["script_1.ts","script_2.ts"]
+> ["deno","lint","--fix","--ignore=script_1.ts,script_2.ts"]
+subcommand lint
+arg fix present=true count=1 []
+arg ignore present=true count=1 ["script_1.ts","script_2.ts"]
+> ["deno","lint","--rules"]
+subcommand lint
+arg rules present=true count=1 []
+> ["deno","lint","--rules","--rules-tags=recommended"]
+subcommand lint
+arg rules present=true count=1 []
+arg rules-tags present=true count=1 ["recommended"]
+> ["recommended"]
+> ["deno","lint","--rules-tags=","--rules-include=ban-untagged-todo,no-undef","--rules-exclude=no-const-assign"]
+subcommand lint
+arg rules-tags present=true count=1 [""]
+arg rules-include present=true count=1 ["ban-untagged-todo","no-undef"]
+arg rules-exclude present=true count=1 ["no-const-assign"]
+> [""]
+> ["ban-untagged-todo","no-undef"]
+arg script_arg present=true count=1 ["no-undef"]
+> ["no-const-assign"]
+> ["deno","lint","--json","script_1.ts"]
+subcommand lint
+arg json present=true count=1 []
+arg files present=true count=1 ["script_1.ts"]
+> ["deno","lint","--config","Deno.jsonc","--json","script_1.ts"]
+subcommand lint
+arg config present=true count=1 ["Deno.jsonc"]
+arg json present=true count=1 []
+arg files present=true count=1 ["script_1.ts"]
+> ["deno","lint","--config","Deno.jsonc","--compact","script_1.ts"]
+subcommand lint
+arg config present=true count=1 ["Deno.jsonc"]
+arg compact present=true count=1 []
+arg files present=true count=1 ["script_1.ts"]
+> ["deno","types"]
+subcommand types
+> ["deno","cache","script.ts"]
+subcommand cache
+arg files present=true count=1 ["script.ts"]
+> ["script.ts"]
+> ["deno","cache","--env-file","script.ts"]
+subcommand cache
+arg env-file present=true count=1 []
+arg files present=true count=1 ["script.ts"]
+> [".env"]
+> ["deno","check","script.ts"]
+subcommand check
+arg files present=true count=1 ["script.ts"]
+> ["deno","check"]
+subcommand check
+> ["."]
+> ["deno","check","--doc","script.ts"]
+subcommand check
+arg doc present=true count=1 []
+arg files present=true count=1 ["script.ts"]
+> ["deno","check","--doc-only","markdown.md"]
+subcommand check
+arg doc-only present=true count=1 []
+arg files present=true count=1 ["markdown.md"]
+> ["markdown.md"]
+> ["deno","check","--doc","--doc-only","script.ts"]
+error InvalidValue: "error: the argument '--doc-only' cannot be used with '--doc'"
+> ["deno","check","--check-js","script.js"]
+subcommand check
+arg check-js present=true count=1 []
+arg files present=true count=1 ["script.js"]
+> ["script.js"]
+> ["deno","check","--desktop","script.ts"]
+subcommand check
+arg desktop present=true count=1 []
+arg files present=true count=1 ["script.ts"]
+> ["deno","info","script.ts"]
+subcommand info
+arg file present=true count=1 ["script.ts"]
+> ["deno","info","--reload","script.ts"]
+subcommand info
+arg reload present=true count=1 []
+arg file present=true count=1 ["script.ts"]
+> ["deno","info","--json","script.ts"]
+subcommand info
+arg json present=true count=1 []
+arg file present=true count=1 ["script.ts"]
+> ["deno","info"]
+subcommand info
+> ["deno","info","--json"]
+subcommand info
+arg json present=true count=1 []
+> ["deno","info","--no-npm","--no-remote","--config","tsconfig.json"]
+subcommand info
+arg no-npm present=true count=1 []
+arg no-remote present=true count=1 []
+arg config present=true count=1 ["tsconfig.json"]
+> ["deno","run","-c","tsconfig.json","script.ts"]
+subcommand run
+arg config present=true count=1 ["tsconfig.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","eval","'console.log(\"hello\")'"]
+subcommand eval
+arg code_arg present=true count=1 ["'console.log(\"hello\")'"]
+> ["deno","eval","-p","1+2"]
+subcommand eval
+arg print present=true count=1 []
+arg code_arg present=true count=1 ["1+2"]
+> ["deno","eval","--ext=ts","'console.log(\"hello\")'"]
+subcommand eval
+arg ext present=true count=1 ["ts"]
+arg code_arg present=true count=1 ["'console.log(\"hello\")'"]
+> ["deno","eval","--import-map","import_map.json","--no-remote","--config","tsconfig.json","--no-check","--reload","--lock","lock.json","--cert","example.crt","--cached-only","--location","https:foo","--v8-flags=--help","--seed","1","--inspect=127.0.0.1:9229","--env=.example.env","42"]
+subcommand eval
+arg import-map present=true count=1 ["import_map.json"]
+arg no-remote present=true count=1 []
+arg config present=true count=1 ["tsconfig.json"]
+arg no-check present=true count=1 []
+arg reload present=true count=1 []
+arg lock present=true count=1 ["lock.json"]
+arg cert present=true count=1 ["example.crt"]
+arg cached-only present=true count=1 []
+arg location present=true count=1 ["https:foo"]
+arg v8-flags present=true count=1 ["--help"]
+arg seed present=true count=1 ["1"]
+arg inspect present=true count=1 ["127.0.0.1:9229"]
+arg env-file present=true count=1 [".example.env"]
+arg code_arg present=true count=1 ["42"]
+> ["--help","--random-seed=1"]
+error UnknownFlag: "error: unexpected argument '--random-seed=1' found"
+> ["deno","eval","console.log(Deno.args)","arg1","arg2"]
+subcommand eval
+arg code_arg present=true count=1 ["console.log(Deno.args)"]
+trailing ["arg1","arg2"]
+> ["arg1","arg2"]
+arg script_arg present=true count=1 ["arg2"]
+> ["deno"]
+> ["deno","repl","--trace-ops"]
+subcommand repl
+arg trace-ops present=true count=1 []
+> ["deno","repl","--trace-ops=http,websocket"]
+subcommand repl
+arg trace-ops present=true count=1 ["http","websocket"]
+> ["deno","repl","-A","--import-map","import_map.json","--no-remote","--config","tsconfig.json","--reload","--lock","lock.json","--cert","example.crt","--cached-only","--location","https:foo","--v8-flags=--help","--seed","1","--inspect=127.0.0.1:9229","--unsafely-ignore-certificate-errors","--env=.example.env"]
+subcommand repl
+arg allow-all present=true count=1 []
+arg import-map present=true count=1 ["import_map.json"]
+arg no-remote present=true count=1 []
+arg config present=true count=1 ["tsconfig.json"]
+arg reload present=true count=1 []
+arg lock present=true count=1 ["lock.json"]
+arg cert present=true count=1 ["example.crt"]
+arg cached-only present=true count=1 []
+arg location present=true count=1 ["https:foo"]
+arg v8-flags present=true count=1 ["--help"]
+arg seed present=true count=1 ["1"]
+arg inspect present=true count=1 ["127.0.0.1:9229"]
+arg unsafely-ignore-certificate-errors present=true count=1 []
+arg env-file present=true count=1 [".example.env"]
+> ["deno","repl","--allow-write","--eval","console.log('hello');"]
+subcommand repl
+arg allow-write present=true count=1 []
+arg eval present=true count=1 ["console.log('hello');"]
+> ["deno","repl","--eval-file=./a.js,./b.ts,https://docs.deno.com/hello_world.ts"]
+subcommand repl
+arg eval-file present=true count=1 ["./a.js","./b.ts","https://docs.deno.com/hello_world.ts"]
+> ["deno","repl","--eval-file","./script.ts"]
+subcommand repl
+arg eval-file present=true count=1 ["./script.ts"]
+> ["deno","repl","--eval-file","./a.ts","--eval-file","./b.ts"]
+subcommand repl
+arg eval-file present=true count=1 ["./a.ts","./b.ts"]
+> ["deno","run","--ignore-read=something.txt","script.ts"]
+subcommand run
+arg ignore-read present=true count=1 ["something.txt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["something.txt"]
+> ["deno","run","--ignore-read=something.txt","--ignore-read=something2.txt","script.ts"]
+subcommand run
+arg ignore-read present=true count=2 ["something.txt","something2.txt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["something.txt","something2.txt"]
+arg script_arg present=true count=1 ["something2.txt"]
+> ["deno","run","--ignore-read=something.txt,something2.txt","script.ts"]
+subcommand run
+arg ignore-read present=true count=1 ["something.txt","something2.txt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-net=127.0.0.1","script.ts"]
+subcommand run
+arg allow-net present=true count=1 ["127.0.0.1"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["127.0.0.1"]
+> ["deno","--deny-net=127.0.0.1","script.ts"]
+arg deny-net present=true count=1 ["127.0.0.1"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-env=HOME","script.ts"]
+subcommand run
+arg allow-env present=true count=1 ["HOME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["HOME"]
+> ["deno","run","--deny-env=HOME","script.ts"]
+subcommand run
+arg deny-env present=true count=1 ["HOME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--ignore-env=HOME","script.ts"]
+subcommand run
+arg ignore-env present=true count=1 ["HOME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-env=HOME,PATH","script.ts"]
+subcommand run
+arg allow-env present=true count=1 ["HOME","PATH"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["HOME","PATH"]
+arg script_arg present=true count=1 ["PATH"]
+> ["deno","run","--deny-env=HOME,PATH","script.ts"]
+subcommand run
+arg deny-env present=true count=1 ["HOME","PATH"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--ignore-env=HOME,PATH","script.ts"]
+subcommand run
+arg ignore-env present=true count=1 ["HOME","PATH"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--allow-env=H=ME","script.ts"]
+arg allow-env present=true count=1 ["H=ME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-env=H\u0000ME","script.ts"]
+subcommand run
+arg allow-env present=true count=1 ["H\u0000ME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-env=H=ME","script.ts"]
+subcommand run
+arg deny-env present=true count=1 ["H=ME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--deny-env=H\u0000ME","script.ts"]
+arg deny-env present=true count=1 ["H\u0000ME"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-sys","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-sys","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-sys=hostname","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 ["hostname"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["hostname"]
+> ["deno","--deny-sys=hostname","script.ts"]
+arg deny-sys present=true count=1 ["hostname"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-sys=hostname,osRelease","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 ["hostname","osRelease"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["hostname","osRelease"]
+arg script_arg present=true count=1 ["osRelease"]
+> ["deno","run","--deny-sys=hostname,osRelease","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 ["hostname","osRelease"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-sys=inspector,setuid,umask,username","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 ["inspector","setuid","umask","username"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["inspector","setuid","umask","username"]
+arg script_arg present=true count=1 ["setuid"]
+trailing ["umask","username"]
+> ["deno","run","--allow-sys=foo","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 ["foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-sys=hostname,foo","script.ts"]
+subcommand run
+arg allow-sys present=true count=1 ["hostname","foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-sys=hostname","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 ["hostname"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-sys=inspector,setuid,umask,username","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 ["inspector","setuid","umask","username"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-sys=foo","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 ["foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-sys=hostname,foo","script.ts"]
+subcommand run
+arg deny-sys present=true count=1 ["hostname","foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=http://deno.land/","script.ts"]
+subcommand run
+arg reload present=true count=1 ["http://deno.land/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=http://deno.land/a,http://deno.land/b","script.ts"]
+subcommand run
+arg reload present=true count=1 ["http://deno.land/a","http://deno.land/b"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=./relativeurl/","script.ts"]
+subcommand run
+arg reload present=true count=1 ["./relativeurl/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=relativeurl/","script.ts"]
+subcommand run
+arg reload present=true count=1 ["relativeurl/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=/absolute","script.ts"]
+subcommand run
+arg reload present=true count=1 ["/absolute"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--reload=/","script.ts"]
+arg reload present=true count=1 ["/"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=","script.ts"]
+subcommand run
+arg reload present=true count=1 [""]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=,","script.ts"]
+subcommand run
+arg reload present=true count=1 ["",""]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=,http://deno.land/a","script.ts"]
+subcommand run
+arg reload present=true count=1 ["","http://deno.land/a"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--reload=http://deno.land/a,","script.ts"]
+subcommand run
+arg reload present=true count=1 ["http://deno.land/a",""]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--import-map=import_map.json","script.ts"]
+subcommand run
+arg import-map present=true count=1 ["import_map.json"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","info","--import-map=import_map.json","script.ts"]
+subcommand info
+arg import-map present=true count=1 ["import_map.json"]
+arg file present=true count=1 ["script.ts"]
+> ["deno","cache","--import-map=import_map.json","script.ts"]
+subcommand cache
+arg import-map present=true count=1 ["import_map.json"]
+arg files present=true count=1 ["script.ts"]
+> ["deno","doc","--import-map=import_map.json","script.ts"]
+subcommand doc
+arg import-map present=true count=1 ["import_map.json"]
+arg source_file present=true count=1 ["script.ts"]
+> ["deno","run","--env","script.ts"]
+subcommand run
+arg env-file present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--no-code-cache","script.ts"]
+arg no-code-cache present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--env=.another_env","script.ts"]
+subcommand run
+arg env-file present=true count=1 [".another_env"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--env-file=.another_env","script.ts"]
+subcommand run
+arg env-file present=true count=1 [".another_env"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--env-file","--env-file=.two_env","script.ts"]
+subcommand run
+arg env-file present=true count=2 [".two_env"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","add","--env-file","@david/which"]
+subcommand add
+arg env-file present=true count=1 []
+arg packages present=true count=1 ["@david/which"]
+> ["deno","audit","--env-file"]
+subcommand audit
+arg env-file present=true count=1 []
+> ["deno","why","--env-file","express"]
+subcommand why
+arg env-file present=true count=1 []
+arg package present=true count=1 ["express"]
+> ["deno","outdated","--env-file"]
+subcommand outdated
+arg env-file present=true count=1 []
+> ["deno","update","--env-file"]
+subcommand update
+arg env-file present=true count=1 []
+> ["deno","bundle","--env-file","main.ts"]
+subcommand bundle
+arg env-file present=true count=1 []
+arg file present=true count=1 ["main.ts"]
+> ["deno","check","--env-file","main.ts"]
+subcommand check
+arg env-file present=true count=1 []
+arg files present=true count=1 ["main.ts"]
+> ["deno","doc","--env-file","main.ts"]
+subcommand doc
+arg env-file present=true count=1 []
+arg source_file present=true count=1 ["main.ts"]
+> ["deno","info","--env-file","main.ts"]
+subcommand info
+arg env-file present=true count=1 []
+arg file present=true count=1 ["main.ts"]
+> ["deno","ci","--env-file"]
+subcommand ci
+arg env-file present=true count=1 []
+> ["deno","publish","--env-file"]
+subcommand publish
+arg env-file present=true count=1 []
+> ["deno","pack","--env-file"]
+subcommand pack
+arg env-file present=true count=1 []
+> ["deno","check","--env-file=.prod.env","main.ts"]
+subcommand check
+arg env-file present=true count=1 [".prod.env"]
+arg files present=true count=1 ["main.ts"]
+> [".prod.env"]
+> ["deno","outdated","--env=.prod.env"]
+subcommand outdated
+arg env-file present=true count=1 [".prod.env"]
+> ["deno","publish","--env-file","--env-file=.prod.env"]
+subcommand publish
+arg env-file present=true count=2 [".prod.env"]
+> ["deno","cache","script.ts","script_two.ts"]
+subcommand cache
+arg files present=true count=1 ["script.ts","script_two.ts"]
+> ["script.ts","script_two.ts"]
+arg script_arg present=true count=1 ["script_two.ts"]
+> ["deno","run","--seed","250","script.ts"]
+subcommand run
+arg seed present=true count=1 ["250"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["--random-seed=250"]
+> ["deno","run","--seed","250","--v8-flags=--expose-gc","script.ts"]
+subcommand run
+arg seed present=true count=1 ["250"]
+arg v8-flags present=true count=1 ["--expose-gc"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["--expose-gc","--random-seed=250"]
+error UnknownFlag: "error: unexpected argument '--random-seed=250' found"
+> ["deno","install","-g","jsr:@std/http/file-server","npm:chalk"]
+subcommand install
+arg global present=true count=1 []
+arg cmd present=true count=1 ["jsr:@std/http/file-server","npm:chalk"]
+> ["jsr:@std/http/file-server","npm:chalk"]
+arg script_arg present=true count=1 ["npm:chalk"]
+> ["deno","install","-g","jsr:@std/http/file-server"]
+subcommand install
+arg global present=true count=1 []
+arg cmd present=true count=1 ["jsr:@std/http/file-server"]
+> ["jsr:@std/http/file-server"]
+> ["deno","install","--global","--import-map","import_map.json","--no-remote","--config","tsconfig.json","--no-check","--unsafely-ignore-certificate-errors","--reload","--lock","lock.json","--cert","example.crt","--cached-only","--allow-read","--allow-net","--v8-flags=--help","--seed","1","--inspect=127.0.0.1:9229","--name","file_server","--root","/foo","--force","--env=.example.env","jsr:@std/http/file-server","--","foo","bar"]
+subcommand install
+arg global present=true count=1 []
+arg import-map present=true count=1 ["import_map.json"]
+arg no-remote present=true count=1 []
+arg config present=true count=1 ["tsconfig.json"]
+arg no-check present=true count=1 []
+arg unsafely-ignore-certificate-errors present=true count=1 []
+arg reload present=true count=1 []
+arg lock present=true count=1 ["lock.json"]
+arg cert present=true count=1 ["example.crt"]
+arg cached-only present=true count=1 []
+arg allow-read present=true count=1 []
+arg allow-net present=true count=1 []
+arg v8-flags present=true count=1 ["--help"]
+arg seed present=true count=1 ["1"]
+arg inspect present=true count=1 ["127.0.0.1:9229"]
+arg name present=true count=1 ["file_server"]
+arg root present=true count=1 ["/foo"]
+arg force present=true count=1 []
+arg env-file present=true count=1 [".example.env"]
+arg cmd present=true count=1 ["jsr:@std/http/file-server"]
+trailing ["foo","bar"]
+> ["foo","bar"]
+arg script_arg present=true count=1 ["bar"]
+> ["deno","uninstall"]
+error MissingRequired: "error: the following required arguments were not provided: packages"
+> ["deno","uninstall","--frozen","--lockfile-only","@std/load"]
+subcommand uninstall
+arg frozen-lockfile present=true count=1 []
+arg lockfile-only present=true count=1 []
+arg packages present=true count=1 ["@std/load"]
+> ["deno","uninstall","file_server","@std/load"]
+subcommand uninstall
+arg packages present=true count=1 ["file_server","@std/load"]
+> ["deno","uninstall","-g","file_server"]
+subcommand uninstall
+arg global present=true count=1 []
+arg packages present=true count=1 ["file_server"]
+> ["file_server"]
+> ["deno","uninstall","-g","--root","/user/foo/bar","file_server"]
+subcommand uninstall
+arg global present=true count=1 []
+arg root present=true count=1 ["/user/foo/bar"]
+arg packages present=true count=1 ["file_server"]
+> ["deno","uninstall","-g","--root","/user/foo/bar","cowsay","file_server"]
+subcommand uninstall
+arg global present=true count=1 []
+arg root present=true count=1 ["/user/foo/bar"]
+arg packages present=true count=1 ["cowsay","file_server"]
+> ["cowsay","file_server"]
+arg script_arg present=true count=1 ["file_server"]
+> ["deno","uninstall","--help"]
+subcommand uninstall
+arg help present=true count=1 []
+> ["deno","run","--log-level=debug","script.ts"]
+subcommand run
+arg log-level present=true count=1 ["debug"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","-q","script.ts"]
+arg quiet present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","completions","zsh"]
+subcommand completions
+arg shell present=true count=1 ["zsh"]
+> ["deno","run","script.ts","--allow-read","--allow-net"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["--allow-read","--allow-net"]
+> ["--allow-read","--allow-net"]
+arg allow-net present=true count=1 []
+> ["deno","run","--location","https:foo","--allow-read","script.ts","--allow-net","-r","--help","--foo","bar"]
+subcommand run
+arg location present=true count=1 ["https:foo"]
+arg allow-read present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["--allow-net","-r","--help","--foo","bar"]
+> ["--allow-net","-r","--help","--foo","bar"]
+error UnknownFlag: "error: unexpected argument '--foo' found"
+> ["deno","run","script.ts","foo","bar"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["foo","bar"]
+> ["deno","run","script.ts","-"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["-"]
+> ["-"]
+> ["deno","run","script.ts","-","foo","bar"]
+subcommand run
+arg script_arg present=true count=1 ["script.ts"]
+trailing ["-","foo","bar"]
+> ["-","foo","bar"]
+arg script_arg present=true count=1 ["foo"]
+trailing ["bar"]
+> ["deno","--no-check","script.ts"]
+arg no-check present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","repl","--eval","console.log('hello');","--unsafely-ignore-certificate-errors"]
+subcommand repl
+arg eval present=true count=1 ["console.log('hello');"]
+arg unsafely-ignore-certificate-errors present=true count=1 []
+> ["deno","run","--unsafely-ignore-certificate-errors","script.ts"]
+subcommand run
+arg unsafely-ignore-certificate-errors present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--unsafely-ignore-certificate-errors=deno.land,localhost,[::],127.0.0.1,[::1],1.2.3.4","script.ts"]
+subcommand run
+arg unsafely-ignore-certificate-errors present=true count=1 ["deno.land","localhost","[::]","127.0.0.1","[::1]","1.2.3.4"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno.land","localhost","[::]","127.0.0.1","[::1]","1.2.3.4"]
+arg script_arg present=true count=1 ["localhost"]
+trailing ["[::]","127.0.0.1","[::1]","1.2.3.4"]
+> ["deno","repl","--unsafely-ignore-certificate-errors=deno.land,localhost,[::],127.0.0.1,[::1],1.2.3.4"]
+subcommand repl
+arg unsafely-ignore-certificate-errors present=true count=1 ["deno.land","localhost","[::]","127.0.0.1","[::1]","1.2.3.4"]
+> ["deno","run","--no-npm","script.ts"]
+subcommand run
+arg no-npm present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--node-modules-dir","script.ts"]
+arg node-modules-dir present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--vendor","script.ts"]
+subcommand run
+arg vendor present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--vendor=false","script.ts"]
+subcommand run
+arg vendor present=true count=1 ["false"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--cached-only","script.ts"]
+subcommand run
+arg cached-only present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-net=deno.land,:8000,:4545","script.ts"]
+subcommand run
+arg allow-net present=true count=1 ["deno.land",":8000",":4545"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno.land","0.0.0.0:8000","127.0.0.1:8000","localhost:8000","0.0.0.0:4545","127.0.0.1:4545","localhost:4545"]
+arg script_arg present=true count=1 ["0.0.0.0:8000"]
+trailing ["127.0.0.1:8000","localhost:8000","0.0.0.0:4545","127.0.0.1:4545","localhost:4545"]
+> ["deno","run","--deny-net=deno.land,:8000,:4545","script.ts"]
+subcommand run
+arg deny-net present=true count=1 ["deno.land",":8000",":4545"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--allow-net=deno.land,deno.land:80,[::],127.0.0.1,[::1],1.2.3.4:5678,:5678,[::1]:8080","script.ts"]
+subcommand run
+arg allow-net present=true count=1 ["deno.land","deno.land:80","[::]","127.0.0.1","[::1]","1.2.3.4:5678",":5678","[::1]:8080"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno.land","deno.land:80","[::]","127.0.0.1","[::1]","1.2.3.4:5678","0.0.0.0:5678","127.0.0.1:5678","localhost:5678","[::1]:8080"]
+arg script_arg present=true count=1 ["deno.land:80"]
+trailing ["[::]","127.0.0.1","[::1]","1.2.3.4:5678","0.0.0.0:5678","127.0.0.1:5678","localhost:5678","[::1]:8080"]
+> ["deno","run","--deny-net=deno.land,deno.land:80,[::],127.0.0.1,[::1],1.2.3.4:5678,:5678,[::1]:8080","script.ts"]
+subcommand run
+arg deny-net present=true count=1 ["deno.land","deno.land:80","[::]","127.0.0.1","[::1]","1.2.3.4:5678",":5678","[::1]:8080"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","test","--no-npm","--no-remote","--trace-leaks","--no-run","--filter","- foo","--coverage=cov","--clean","--location","https:foo","--allow-net","--permit-no-files","dir1/","dir2/","--","arg1","arg2"]
+subcommand test
+arg no-npm present=true count=1 []
+arg no-remote present=true count=1 []
+arg trace-leaks present=true count=1 []
+arg no-run present=true count=1 []
+arg filter present=true count=1 ["- foo"]
+arg coverage present=true count=1 ["cov"]
+arg clean present=true count=1 []
+arg location present=true count=1 ["https:foo"]
+arg allow-net present=true count=1 []
+arg permit-no-files present=true count=1 []
+arg files present=true count=1 ["dir1/","dir2/"]
+trailing ["arg1","arg2"]
+> ["deno","run","--cert","example.crt","script.ts"]
+subcommand run
+arg cert present=true count=1 ["example.crt"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--cert","base64:bWVvdw==","script.ts"]
+subcommand run
+arg cert present=true count=1 ["base64:bWVvdw=="]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--enable-testing-features-do-not-use","script.ts"]
+subcommand run
+arg enable-testing-features present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","test","--fail-fast=0"]
+error InvalidValue: "error: invalid value '0' for '--fail-fast'"
+> ["deno","test","--enable-testing-features-do-not-use"]
+subcommand test
+arg enable-testing-features present=true count=1 []
+> ["deno","test","--changed"]
+subcommand test
+arg changed present=true count=1 []
+> ["deno","test","--changed=origin/main"]
+subcommand test
+arg changed present=true count=1 ["origin/main"]
+> ["deno","test","--changed","HEAD~1"]
+subcommand test
+arg changed present=true count=1 []
+arg files present=true count=1 ["HEAD~1"]
+> ["deno","test","--related=src/a.ts,src/b.ts"]
+subcommand test
+arg related present=true count=1 ["src/a.ts,src/b.ts"]
+> ["src/a.ts","src/b.ts"]
+arg script_arg present=true count=1 ["src/b.ts"]
+> ["deno","test","--changed","--watch"]
+error InvalidValue: "error: the argument '--changed <changed>' cannot be used with '--watch <watch>'"
+> ["deno","test","--related=a.ts","--watch"]
+error InvalidValue: "error: the argument '--related <related>' cannot be used with '--watch <watch>'"
+> ["deno","test","--reporter=pretty"]
+subcommand test
+arg reporter present=true count=1 ["pretty"]
+> ["deno","test","--reporter=dot"]
+subcommand test
+arg reporter present=true count=1 ["dot"]
+> ["deno","test","--reporter=junit"]
+subcommand test
+arg reporter present=true count=1 ["junit"]
+> ["deno","test","--reporter=tap"]
+subcommand test
+arg reporter present=true count=1 ["tap"]
+> ["deno","test","--reporter=dot","--junit-path=report.xml"]
+subcommand test
+arg reporter present=true count=1 ["dot"]
+arg junit-path present=true count=1 ["report.xml"]
+> ["deno","test","--junit-path"]
+error MissingValue: "error: a value is required for '--junit-path' but none was supplied"
+> ["deno","test","--shuffle=1"]
+subcommand test
+arg shuffle present=true count=1 ["1"]
+> ["deno","test","--retry=3","--repeats=2"]
+subcommand test
+arg retry present=true count=1 ["3"]
+arg repeats present=true count=1 ["2"]
+> ["deno","test","--shard=2/3"]
+subcommand test
+arg shard present=true count=1 ["2/3"]
+> ["deno","test","--shard=3/2"]
+subcommand test
+arg shard present=true count=1 ["3/2"]
+> ["deno","test","--shard=0/2"]
+subcommand test
+arg shard present=true count=1 ["0/2"]
+> ["deno","test","--shard=1/0"]
+subcommand test
+arg shard present=true count=1 ["1/0"]
+> ["deno","test","--shard=foo"]
+subcommand test
+arg shard present=true count=1 ["foo"]
+> ["deno","test","--watch","./"]
+subcommand test
+arg watch present=true count=1 []
+arg files present=true count=1 ["./"]
+> ["deno","test","--watch=foo,bar"]
+subcommand test
+arg watch present=true count=1 ["foo","bar"]
+> ["deno","test","--watch","--watch-exclude=foo,bar"]
+subcommand test
+arg watch present=true count=1 []
+arg watch-exclude present=true count=1 ["foo","bar"]
+> ["deno","test","--watch=foo,bar","--watch-exclude=baz,qux"]
+subcommand test
+arg watch present=true count=1 ["foo","bar"]
+arg watch-exclude present=true count=1 ["baz","qux"]
+> ["deno","test","--coverage"]
+subcommand test
+arg coverage present=true count=1 []
+> ["deno","test","--hide-stacktraces"]
+subcommand test
+arg hide-stacktraces present=true count=1 []
+> ["deno","upgrade","--cert","example.crt"]
+subcommand upgrade
+arg cert present=true count=1 ["example.crt"]
+> ["deno","upgrade","--rc","--canary"]
+error InvalidValue: "error: the argument '--release-candidate' cannot be used with '--canary'"
+> ["deno","upgrade","--rc","--version"]
+error MissingValue: "error: a value is required for '--version' but none was supplied"
+> ["deno","upgrade","pr","12345"]
+subcommand upgrade
+arg version-or-hash-or-channel present=true count=1 ["pr"]
+arg pr-number-positional present=true count=1 ["12345"]
+> ["deno","upgrade","pr","#6789"]
+subcommand upgrade
+arg version-or-hash-or-channel present=true count=1 ["pr"]
+arg pr-number-positional present=true count=1 ["#6789"]
+> ["deno","upgrade","--dry-run","pr","33250"]
+subcommand upgrade
+arg dry-run present=true count=1 []
+arg version-or-hash-or-channel present=true count=1 ["pr"]
+arg pr-number-positional present=true count=1 ["33250"]
+> ["deno","upgrade","pr"]
+subcommand upgrade
+arg version-or-hash-or-channel present=true count=1 ["pr"]
+> ["deno","upgrade","pr","abc"]
+subcommand upgrade
+arg version-or-hash-or-channel present=true count=1 ["pr"]
+arg pr-number-positional present=true count=1 ["abc"]
+> ["deno","cache","--cert","example.crt","script.ts","script_two.ts"]
+subcommand cache
+arg cert present=true count=1 ["example.crt"]
+arg files present=true count=1 ["script.ts","script_two.ts"]
+> ["deno","info","--cert","example.crt","https://example.com"]
+subcommand info
+arg cert present=true count=1 ["example.crt"]
+arg file present=true count=1 ["https://example.com"]
+> ["deno","doc","--json","path/to/module.ts"]
+subcommand doc
+arg json present=true count=1 []
+arg source_file present=true count=1 ["path/to/module.ts"]
+> ["path/to/module.ts"]
+> ["deno","doc","--html","path/to/module.ts"]
+subcommand doc
+arg html present=true count=1 []
+arg source_file present=true count=1 ["path/to/module.ts"]
+> ["deno","doc","--html","--name=My library","path/to/module.ts"]
+subcommand doc
+arg html present=true count=1 []
+arg name present=true count=1 ["My library"]
+arg source_file present=true count=1 ["path/to/module.ts"]
+> ["deno","doc","--html","--name=My library","--lint","--output=./foo","path/to/module.ts"]
+subcommand doc
+arg html present=true count=1 []
+arg name present=true count=1 ["My library"]
+arg lint present=true count=1 []
+arg output present=true count=1 ["./foo"]
+arg source_file present=true count=1 ["path/to/module.ts"]
+> ["deno","doc","--html","--name=My library"]
+subcommand doc
+arg html present=true count=1 []
+arg name present=true count=1 ["My library"]
+> ["deno","doc","--filter","SomeClass.someField","path/to/module.ts"]
+subcommand doc
+arg filter present=true count=1 ["SomeClass.someField"]
+arg source_file present=true count=1 ["path/to/module.ts"]
+> ["deno","doc"]
+subcommand doc
+> ["deno","doc","--filter","Deno.Listener","--builtin"]
+subcommand doc
+arg filter present=true count=1 ["Deno.Listener"]
+arg builtin present=true count=1 []
+> ["deno","doc","--no-npm","--no-remote","--private","path/to/module.js"]
+subcommand doc
+arg no-npm present=true count=1 []
+arg no-remote present=true count=1 []
+arg private present=true count=1 []
+arg source_file present=true count=1 ["path/to/module.js"]
+> ["path/to/module.js"]
+> ["deno","doc","path/to/module.js","path/to/module2.js"]
+subcommand doc
+arg source_file present=true count=1 ["path/to/module.js","path/to/module2.js"]
+> ["deno","doc","path/to/module.js","--builtin","path/to/module2.js"]
+subcommand doc
+arg source_file present=true count=1 ["path/to/module.js","path/to/module2.js"]
+arg builtin present=true count=1 []
+> ["deno","doc","--lint"]
+subcommand doc
+arg lint present=true count=1 []
+> ["deno","doc","--lint","path/to/module.js","path/to/module2.js"]
+subcommand doc
+arg lint present=true count=1 []
+arg source_file present=true count=1 ["path/to/module.js","path/to/module2.js"]
+> ["deno","run","--inspect","foo.js"]
+subcommand run
+arg inspect present=true count=1 []
+arg script_arg present=true count=1 ["foo.js"]
+> ["deno","--inspect-wait","foo.js"]
+arg inspect-wait present=true count=1 []
+arg script_arg present=true count=1 ["foo.js"]
+> ["deno","run","--inspect-wait=127.0.0.1:3567","foo.js"]
+subcommand run
+arg inspect-wait present=true count=1 ["127.0.0.1:3567"]
+arg script_arg present=true count=1 ["foo.js"]
+> ["deno","compile","https://examples.deno.land/color-logging.ts"]
+subcommand compile
+arg source_file present=true count=1 ["https://examples.deno.land/color-logging.ts"]
+> ["deno","compile","--engine","quickjs","main.ts"]
+subcommand compile
+arg engine present=true count=1 ["quickjs"]
+arg source_file present=true count=1 ["main.ts"]
+> ["deno","desktop","--engine","quickjs","main.tsx"]
+subcommand desktop
+arg engine present=true count=1 ["quickjs"]
+arg script_arg present=true count=1 ["main.tsx"]
+> ["deno","compile","--target=aarch64-pc-windows-msvc","main.ts"]
+subcommand compile
+arg target present=true count=1 ["aarch64-pc-windows-msvc"]
+arg source_file present=true count=1 ["main.ts"]
+> ["deno","compile","--target=riscv64gc-unknown-linux-gnu","main.ts"]
+error InvalidValue: "error: invalid value 'riscv64gc-unknown-linux-gnu' for '--target': possible values: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin"
+> ["deno","desktop","main.tsx"]
+subcommand desktop
+arg script_arg present=true count=1 ["main.tsx"]
+> ["deno","desktop","--backend","cef","main.tsx"]
+subcommand desktop
+arg backend present=true count=1 ["cef"]
+arg script_arg present=true count=1 ["main.tsx"]
+> ["deno","desktop","--exclude-unused-npm","main.tsx"]
+subcommand desktop
+arg exclude-unused-npm present=true count=1 []
+arg script_arg present=true count=1 ["main.tsx"]
+> ["deno","compile","--watch","--no-clear-screen","main.ts"]
+subcommand compile
+arg watch present=true count=1 []
+arg no-clear-screen present=true count=1 []
+arg source_file present=true count=1 ["main.ts"]
+> ["deno","compile","--include","include.txt","--exclude","exclude.txt","--import-map","import_map.json","--no-code-cache","--no-remote","--config","tsconfig.json","--no-check","--unsafely-ignore-certificate-errors","--reload","--lock","lock.json","--cert","example.crt","--cached-only","--location","https:foo","--allow-read","--allow-net","--v8-flags=--help","--seed","1","--no-terminal","--icon","favicon.ico","--output","colors","--env=.example.env","https://examples.deno.land/color-logging.ts","foo","bar","-p","8080"]
+subcommand compile
+arg include present=true count=1 ["include.txt"]
+arg exclude present=true count=1 ["exclude.txt"]
+arg import-map present=true count=1 ["import_map.json"]
+arg no-code-cache present=true count=1 []
+arg no-remote present=true count=1 []
+arg config present=true count=1 ["tsconfig.json"]
+arg no-check present=true count=1 []
+arg unsafely-ignore-certificate-errors present=true count=1 []
+arg reload present=true count=1 []
+arg lock present=true count=1 ["lock.json"]
+arg cert present=true count=1 ["example.crt"]
+arg cached-only present=true count=1 []
+arg location present=true count=1 ["https:foo"]
+arg allow-read present=true count=1 []
+arg allow-net present=true count=1 []
+arg v8-flags present=true count=1 ["--help"]
+arg seed present=true count=1 ["1"]
+arg no-terminal present=true count=1 []
+arg icon present=true count=1 ["favicon.ico"]
+arg output present=true count=1 ["colors"]
+arg env-file present=true count=1 [".example.env"]
+arg source_file present=true count=1 ["https://examples.deno.land/color-logging.ts"]
+trailing ["foo","bar","-p","8080"]
+> ["foo","bar","-p","8080"]
+arg script_arg present=true count=1 ["bar"]
+trailing ["-p","8080"]
+> ["deno","coverage","foo.json"]
+subcommand coverage
+arg files present=true count=1 ["foo.json"]
+> ["deno","coverage","--threshold=80","foo.json"]
+subcommand coverage
+arg threshold present=true count=1 ["80"]
+arg files present=true count=1 ["foo.json"]
+> ["deno","coverage","--threshold=150","foo.json"]
+subcommand coverage
+arg threshold present=true count=1 ["150"]
+arg files present=true count=1 ["foo.json"]
+> ["deno","coverage","--lcov","--output=foo.lcov","foo.json"]
+subcommand coverage
+arg lcov present=true count=1 []
+arg output present=true count=1 ["foo.lcov"]
+arg files present=true count=1 ["foo.json"]
+> ["deno","coverage"]
+subcommand coverage
+> ["deno","run","--location","foo:","mod.ts"]
+subcommand run
+arg location present=true count=1 ["foo:"]
+arg script_arg present=true count=1 ["mod.ts"]
+> ["deno","run","--no-clear-screen","foo.js"]
+error MissingRequired: "error: the following required arguments were not provided: --watch"
+> ["deno","task","build","hello","world"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+trailing ["hello","world"]
+> ["hello","world"]
+arg script_arg present=true count=1 ["world"]
+> ["deno","task","build"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--cwd","foo","build"]
+subcommand task
+arg cwd present=true count=1 ["foo"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--filter","*","build"]
+subcommand task
+arg filter present=true count=1 ["*"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--recursive","build"]
+subcommand task
+arg recursive present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","task","-r","build"]
+subcommand task
+arg recursive present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--members","build"]
+subcommand task
+arg members present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--members","-r","build"]
+error InvalidValue: "error: the argument '--members' cannot be used with '--recursive'"
+> ["deno","task","--members","-f","*","build"]
+error InvalidValue: "error: the argument '--members' cannot be used with '--filter <filter>'"
+> ["deno","task","--eval","echo 1"]
+subcommand task
+arg eval present=true count=1 []
+arg task_name present=true count=1 ["echo 1"]
+> ["deno","task","--eval"]
+subcommand task
+arg eval present=true count=1 []
+> ["deno","task","--jobs","1","build"]
+subcommand task
+arg jobs present=true count=1 ["1"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--concurrency","1","build"]
+subcommand task
+arg jobs present=true count=1 ["1"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","-j","1","build"]
+subcommand task
+arg jobs present=true count=1 ["1"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","-c","deno.json","build","--","hello","world"]
+subcommand task
+arg config present=true count=1 ["deno.json"]
+arg task_name present=true count=1 ["build"]
+trailing ["--","hello","world"]
+> ["--","hello","world"]
+arg script_arg present=true count=1 ["hello"]
+trailing ["world"]
+> ["deno","task","--cwd","foo","build","--","hello","world"]
+subcommand task
+arg cwd present=true count=1 ["foo"]
+arg task_name present=true count=1 ["build"]
+trailing ["--","hello","world"]
+> ["deno","task","build","--"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+trailing ["--"]
+> ["--"]
+> ["deno","task","build","-1","--test"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+trailing ["-1","--test"]
+> ["-1","--test"]
+error UnknownFlag: "error: unexpected argument '--test' found\n\n  tip: a similar argument exists: '--ext'"
+> ["deno","task","build","--test"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+trailing ["--test"]
+> ["--test"]
+> ["deno","--quiet","task","build"]
+subcommand task
+arg quiet present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","task"]
+subcommand task
+> ["deno","task","--config","deno.jsonc"]
+subcommand task
+arg config present=true count=1 ["deno.jsonc"]
+> ["deno","task","-c","deno.jsonc"]
+subcommand task
+arg config present=true count=1 ["deno.jsonc"]
+> ["deno","task","--no-config"]
+error UnknownFlag: "error: unexpected argument '--no-config' found"
+> ["deno","task","--env-file","build"]
+subcommand task
+arg env-file present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--env-file=.env.dev","--env-file=.env.local","build"]
+subcommand task
+arg env-file present=true count=2 [".env.dev",".env.local"]
+arg task_name present=true count=1 ["build"]
+> ["deno","task","--if-present","build"]
+subcommand task
+arg if-present present=true count=1 []
+arg task_name present=true count=1 ["build"]
+> ["deno","bench","--json","--no-npm","--no-remote","--no-run","--filter","- foo","--location","https:foo","--allow-net","dir1/","dir2/","--","arg1","arg2"]
+subcommand bench
+arg json present=true count=1 []
+arg no-npm present=true count=1 []
+arg no-remote present=true count=1 []
+arg no-run present=true count=1 []
+arg filter present=true count=1 ["- foo"]
+arg location present=true count=1 ["https:foo"]
+arg allow-net present=true count=1 []
+arg files present=true count=1 ["dir1/","dir2/"]
+trailing ["arg1","arg2"]
+> ["deno","bench","--watch"]
+subcommand bench
+arg watch present=true count=1 []
+> ["deno","bench","--watch=foo,bar"]
+subcommand bench
+arg watch present=true count=1 ["foo","bar"]
+> ["deno","bench","--permit-no-files"]
+subcommand bench
+arg permit-no-files present=true count=1 []
+> ["deno","run","--check","script.ts"]
+subcommand run
+arg check present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--check=all","script.ts"]
+subcommand run
+arg check present=true count=1 ["all"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--check=foo","script.ts"]
+arg check present=true count=1 ["foo"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-check","--check","script.ts"]
+error InvalidValue: "error: the argument '--no-check <no-check>' cannot be used with '--check <check>'"
+> ["deno","run","--config","deno.json","--no-config","script.ts"]
+error InvalidValue: "error: the argument '--no-config' cannot be used with '--config <config>'"
+> ["deno","init"]
+subcommand init
+> ["deno","init","foo"]
+subcommand init
+arg args present=true count=1 ["foo"]
+> ["deno","init","--quiet"]
+subcommand init
+arg quiet present=true count=1 []
+> ["deno","init","--lib"]
+subcommand init
+arg lib present=true count=1 []
+> ["deno","init","--serve"]
+subcommand init
+arg serve present=true count=1 []
+> ["deno","init","foo","--lib"]
+subcommand init
+arg args present=true count=1 ["foo","--lib"]
+> ["deno","init","--lib","--npm","vite"]
+error InvalidValue: "error: the argument '--npm' cannot be used with '--lib'"
+> ["deno","init","--serve","--npm","vite"]
+error InvalidValue: "error: the argument '--npm' cannot be used with '--serve'"
+> ["deno","init","--npm","vite","--lib"]
+subcommand init
+arg npm present=true count=1 []
+arg args present=true count=1 ["vite","--lib"]
+> ["--lib"]
+> ["deno","init","--npm","vite","--serve"]
+subcommand init
+arg npm present=true count=1 []
+arg args present=true count=1 ["vite","--serve"]
+> ["--serve"]
+> ["deno","init","--npm","vite","new_dir"]
+subcommand init
+arg npm present=true count=1 []
+arg args present=true count=1 ["vite","new_dir"]
+> ["new_dir"]
+> ["deno","init","--npm","--yes","npm:vite"]
+subcommand init
+arg npm present=true count=1 []
+arg yes present=true count=1 []
+arg args present=true count=1 ["npm:vite"]
+> ["deno","init","--jsr","@denotest/create"]
+subcommand init
+arg jsr present=true count=1 []
+arg args present=true count=1 ["@denotest/create"]
+> ["deno","init","--jsr","jsr:@fresh/init"]
+subcommand init
+arg jsr present=true count=1 []
+arg args present=true count=1 ["jsr:@fresh/init"]
+> ["deno","init","--jsr","--yes","@denotest/create"]
+subcommand init
+arg jsr present=true count=1 []
+arg yes present=true count=1 []
+arg args present=true count=1 ["@denotest/create"]
+> ["deno","init","--jsr","@denotest/create","my-project"]
+subcommand init
+arg jsr present=true count=1 []
+arg args present=true count=1 ["@denotest/create","my-project"]
+> ["my-project"]
+> ["deno","init","--jsr","--npm","@foo/bar"]
+error InvalidValue: "error: the argument '--npm' cannot be used with '--jsr'"
+> ["deno","init","--jsr","--lib","@foo/bar"]
+error InvalidValue: "error: the argument '--jsr' cannot be used with '--lib'"
+> ["deno","init","--jsr"]
+subcommand init
+arg jsr present=true count=1 []
+> ["deno","create"]
+error MissingRequired: "error: the following required arguments were not provided: package"
+> ["deno","create","vite"]
+subcommand create
+arg package present=true count=1 ["vite"]
+> ["deno","create","npm:vite","my-project"]
+error UnexpectedPositional: "error: unexpected argument 'my-project'"
+> ["deno","create","npm:vite","--","my-project"]
+subcommand create
+arg package present=true count=1 ["npm:vite"]
+trailing ["my-project"]
+> ["deno","create","--npm","vite"]
+subcommand create
+arg npm present=true count=1 []
+arg package present=true count=1 ["vite"]
+> ["deno","create","--npm","vite","my-project"]
+error UnexpectedPositional: "error: unexpected argument 'my-project'"
+> ["deno","create","--yes","npm:vite"]
+subcommand create
+arg yes present=true count=1 []
+arg package present=true count=1 ["npm:vite"]
+> ["deno","create","jsr:@std/http/file-server"]
+subcommand create
+arg package present=true count=1 ["jsr:@std/http/file-server"]
+> ["deno","create","jsr:@fresh/init"]
+subcommand create
+arg package present=true count=1 ["jsr:@fresh/init"]
+> ["deno","create","--yes","jsr:@fresh/init"]
+subcommand create
+arg yes present=true count=1 []
+arg package present=true count=1 ["jsr:@fresh/init"]
+> ["deno","create","jsr:@fresh/init","--","my-project"]
+subcommand create
+arg package present=true count=1 ["jsr:@fresh/init"]
+trailing ["my-project"]
+> ["deno","create","jsr:"]
+subcommand create
+arg package present=true count=1 ["jsr:"]
+> ["deno","create","--jsr","@fresh/init"]
+subcommand create
+arg jsr present=true count=1 []
+arg package present=true count=1 ["@fresh/init"]
+> ["deno","create","--jsr","--yes","@fresh/init"]
+subcommand create
+arg jsr present=true count=1 []
+arg yes present=true count=1 []
+arg package present=true count=1 ["@fresh/init"]
+> ["deno","create","--jsr","npm:vite"]
+subcommand create
+arg jsr present=true count=1 []
+arg package present=true count=1 ["npm:vite"]
+> ["deno","create","--jsr","--npm","@foo"]
+error InvalidValue: "error: the argument '--npm' cannot be used with '--jsr'"
+> ["deno","create","npm:"]
+subcommand create
+arg package present=true count=1 ["npm:"]
+> ["deno","create","--npm","jsr:@std/http"]
+subcommand create
+arg npm present=true count=1 []
+arg package present=true count=1 ["jsr:@std/http"]
+> ["deno","jupyter"]
+subcommand jupyter
+> ["deno","jupyter","--install"]
+subcommand jupyter
+arg install present=true count=1 []
+> ["deno","jupyter","--install","--force"]
+subcommand jupyter
+arg install present=true count=1 []
+arg force present=true count=1 []
+> ["deno","jupyter","--install","--name","debugdeno","--display","Deno (debug)"]
+subcommand jupyter
+arg install present=true count=1 []
+arg name present=true count=1 ["debugdeno"]
+arg display present=true count=1 ["Deno (debug)"]
+> ["deno","jupyter","-n","debugdeno"]
+subcommand jupyter
+arg name present=true count=1 ["debugdeno"]
+> ["deno","jupyter","--kernel","--conn","path/to/conn/file"]
+subcommand jupyter
+arg kernel present=true count=1 []
+arg conn present=true count=1 ["path/to/conn/file"]
+> ["deno","jupyter","--install","--conn","path/to/conn/file"]
+error InvalidValue: "error: the argument '--conn <conn>' cannot be used with '--install'"
+> ["deno","jupyter","--kernel"]
+error MissingRequired: "error: the following required arguments were not provided: --conn"
+> ["deno","jupyter","--install","--kernel"]
+error InvalidValue: "error: the argument '--install' cannot be used with '--kernel'"
+> ["deno","jupyter","--display","deno"]
+error MissingRequired: "error: the following required arguments were not provided: --install"
+> ["deno","jupyter","--kernel","--display"]
+error MissingValue: "error: a value is required for '--display' but none was supplied"
+> ["deno","jupyter","--force"]
+error MissingRequired: "error: the following required arguments were not provided: --install"
+> ["deno","publish","--no-provenance","--dry-run","--allow-slow-types","--allow-dirty","--token=asdf","--set-version=1.0.1"]
+subcommand publish
+arg no-provenance present=true count=1 []
+arg dry-run present=true count=1 []
+arg allow-slow-types present=true count=1 []
+arg allow-dirty present=true count=1 []
+arg token present=true count=1 ["asdf"]
+arg set-version present=true count=1 ["1.0.1"]
+> ["deno","add"]
+error MissingRequired: "error: the following required arguments were not provided: packages"
+> ["@david/which"]
+> ["@david/which","@luca/hello"]
+arg script_arg present=true count=1 ["@luca/hello"]
+> ["npm:chalk"]
+> ["chalk"]
+> ["@std/fs"]
+> ["jsr:@david/which"]
+> ["deno","add","--allow-import=example.com","@david/which"]
+subcommand add
+arg allow-import present=true count=1 ["example.com"]
+arg packages present=true count=1 ["@david/which"]
+> ["example.com"]
+> ["deno","remove"]
+error MissingRequired: "error: the following required arguments were not provided: packages"
+> ["deno","remove","@david/which"]
+subcommand remove
+arg packages present=true count=1 ["@david/which"]
+> ["deno","remove","--frozen","--lockfile-only","@david/which","@luca/hello"]
+subcommand remove
+arg frozen-lockfile present=true count=1 []
+arg lockfile-only present=true count=1 []
+arg packages present=true count=1 ["@david/which","@luca/hello"]
+> ["deno","remove","-g","--root","/user/foo/bar","file_server"]
+subcommand remove
+arg global present=true count=1 []
+arg root present=true count=1 ["/user/foo/bar"]
+arg packages present=true count=1 ["file_server"]
+> ["deno","remove","-g","file_server","chalk"]
+subcommand remove
+arg global present=true count=1 []
+arg packages present=true count=1 ["file_server","chalk"]
+> ["file_server","chalk"]
+arg script_arg present=true count=1 ["chalk"]
+> ["deno","remove","--root","/tmp","@std/path"]
+error MissingRequired: "error: the following required arguments were not provided: --global"
+> ["deno","run"]
+subcommand run
+> ["deno","cache"]
+subcommand cache
+> ["deno","x","--ignore-scripts","-y","npm:foo","--bar"]
+subcommand x
+arg ignore-scripts present=true count=1 []
+arg yes present=true count=1 []
+arg script_arg present=true count=1 ["npm:foo","--bar"]
+> ["--bar"]
+> ["deno","x","--ignore-scripts","--allow-scripts","npm:foo"]
+error InvalidValue: "error: the argument '--ignore-scripts <ignore-scripts>' cannot be used with '--allow-scripts <allow-scripts>'"
+> ["deno","x","--ignore-scripts=foo,npm:bar@2","npm:foo"]
+subcommand x
+arg ignore-scripts present=true count=1 ["foo,npm:bar@2"]
+arg script_arg present=true count=1 ["npm:foo"]
+> ["deno","--no-config","script.ts"]
+arg no-config present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","--log-level=debug"]
+arg log-level present=true count=1 ["debug"]
+> ["deno","repl","foo"]
+error UnexpectedPositional: "error: unexpected argument 'foo'"
+> ["deno","repl","--","foo"]
+subcommand repl
+trailing ["foo"]
+> ["foo"]
+> ["deno","--no-config"]
+arg no-config present=true count=1 []
+> ["deno","ci"]
+subcommand ci
+> ["deno","ci","--prod","--skip-types"]
+subcommand ci
+arg prod present=true count=1 []
+arg skip-types present=true count=1 []
+> ["deno","install","--allow-net","jsr:@std/fs"]
+subcommand install
+arg allow-net present=true count=1 []
+arg cmd present=true count=1 ["jsr:@std/fs"]
+> ["deno","install","-g","--os","linux","mod.ts"]
+error InvalidValue: "error: the argument '--os <os>' cannot be used with '--global'"
+> ["deno","install","--prod"]
+subcommand install
+arg prod present=true count=1 []
+> ["deno","install","--prod","--entrypoint","main.ts"]
+subcommand install
+arg prod present=true count=1 []
+arg entrypoint present=true count=1 []
+arg cmd present=true count=1 ["main.ts"]
+> ["main.ts"]
+> ["deno","install","--prod","--skip-types"]
+subcommand install
+arg prod present=true count=1 []
+arg skip-types present=true count=1 []
+> ["deno","install","--skip-types"]
+error MissingRequired: "error: the following required arguments were not provided: --prod"
+> ["deno","install","--prod","--global","jsr:@std/http/file-server"]
+error InvalidValue: "error: the argument '--prod' cannot be used with '--global'"
+> ["deno","install","--prod","--dev","npm:chalk"]
+error InvalidValue: "error: the argument '--prod' cannot be used with '--dev'"
+> ["deno","jupyter","--unstable-ffi","--unstable-bare-node-builtins","--unstable-worker-options"]
+subcommand jupyter
+arg unstable-ffi present=true count=1 []
+arg unstable-bare-node-builtins present=true count=1 []
+arg unstable-worker-options present=true count=1 []
+> ["bare-node-builtins","ffi","worker-options"]
+arg script_arg present=true count=1 ["ffi"]
+trailing ["worker-options"]
+> ["deno","serve","--allow-all","./main.ts"]
+subcommand serve
+arg allow-all present=true count=1 []
+arg script_arg present=true count=1 ["./main.ts"]
+> ["deno","run","--allow-net=https://example.com","script.ts"]
+subcommand run
+arg allow-net present=true count=1 ["https://example.com"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--node-modules-dir","./foo.ts"]
+subcommand run
+arg node-modules-dir present=true count=1 []
+arg script_arg present=true count=1 ["./foo.ts"]
+> ["deno","--allow-net","repl"]
+arg allow-net present=true count=1 []
+arg script_arg present=true count=1 ["repl"]
+> ["deno","--allow-all","lint"]
+arg allow-all present=true count=1 []
+arg script_arg present=true count=1 ["lint"]
+> ["deno","run","--allow-import=https://example.com","script.ts"]
+subcommand run
+arg allow-import present=true count=1 ["https://example.com"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--deny-import=https://example.com","script.ts"]
+subcommand run
+arg deny-import present=true count=1 ["https://example.com"]
+arg script_arg present=true count=1 ["script.ts"]
+> []
+> ["--recursive"]
+> ["--recursive","--compatible"]
+error UnknownFlag: "error: unexpected argument '--compatible' found"
+> ["--update"]
+> ["--update","--latest"]
+error UnknownFlag: "error: unexpected argument '--latest' found"
+> ["--update","--recursive"]
+error UnknownFlag: "error: unexpected argument '--recursive' found"
+> ["--update","--lockfile-only"]
+error UnknownFlag: "error: unexpected argument '--lockfile-only' found"
+> ["--update","@foo/bar"]
+arg script_arg present=true count=1 ["@foo/bar"]
+> ["@foo/bar"]
+> ["--latest"]
+> ["--update","--latest","--interactive"]
+error UnknownFlag: "error: unexpected argument '--latest' found"
+> ["deno","outdated"]
+subcommand outdated
+> ["--depth","3"]
+arg script_arg present=true count=1 ["3"]
+> ["--prod"]
+> ["--dev","@foo/bar","react*"]
+arg script_arg present=true count=1 ["@foo/bar"]
+trailing ["react*"]
+> ["@foo/bar","react*"]
+arg script_arg present=true count=1 ["react*"]
+> ["deno","list"]
+subcommand list
+> ["deno","list","--prod","--dev"]
+error InvalidValue: "error: the argument '--prod' cannot be used with '--dev'"
+> ["--lockfile-only"]
+> ["--latest","--interactive"]
+error UnknownFlag: "error: unexpected argument '--interactive' found"
+> ["deno","update"]
+subcommand update
+> ["deno","update","--frozen=false"]
+subcommand update
+arg frozen-lockfile present=true count=1 ["false"]
+> ["deno","update","--frozen"]
+subcommand update
+arg frozen-lockfile present=true count=1 []
+> ["deno","outdated","--frozen=false"]
+subcommand outdated
+arg frozen-lockfile present=true count=1 ["false"]
+> ["npm:pkg@1.0.0"]
+> ["npm:pkg1@1.0.0","npm:pkg2@2.0.0"]
+arg script_arg present=true count=1 ["npm:pkg2@2.0.0"]
+> ["npm:pkg1@1.0.0,npm:pkg2@2.0.0"]
+> ["--lockfile-only","npm:pkg@1.0.0"]
+arg script_arg present=true count=1 ["npm:pkg@1.0.0"]
+> ["npm:pkg@1.0.0","--lockfile-only"]
+error UnknownFlag: "error: unexpected argument '--lockfile-only' found"
+> ["npm:pkg1@1.0.0","npm:pkg2@2.0.0","--lockfile-only"]
+arg script_arg present=true count=1 ["npm:pkg2@2.0.0"]
+trailing ["--lockfile-only"]
+> ["deno","approve-scripts"]
+subcommand approve-scripts
+> ["--except","path1"]
+arg script_arg present=true count=1 ["path1"]
+> ["--except","path1","path2"]
+arg script_arg present=true count=1 ["path1"]
+trailing ["path2"]
+> ["--except","path1","--dry-run"]
+arg script_arg present=true count=1 ["path1"]
+trailing ["--dry-run"]
+> ["--dry-run"]
+> ["deno","clean"]
+subcommand clean
+> ["deno","run","--conditions","development","main.ts"]
+subcommand run
+arg node-conditions present=true count=1 ["development"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["development"]
+> ["deno","run","--conditions","development,production","main.ts"]
+subcommand run
+arg node-conditions present=true count=1 ["development","production"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["development","production"]
+arg script_arg present=true count=1 ["production"]
+> ["deno","run","--conditions","development","--conditions","production","main.ts"]
+subcommand run
+arg node-conditions present=true count=1 ["development","production"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","run","--preload","preload.js","main.ts"]
+subcommand run
+arg preload present=true count=1 ["preload.js"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["preload.js"]
+> ["deno","run","--preload","data:,()","main.ts"]
+subcommand run
+arg preload present=true count=1 ["data:,()"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["data:,()"]
+> ["deno","compile","--preload","p1.js","--preload","./p2.js","main.ts"]
+subcommand compile
+arg preload present=true count=1 ["p1.js","./p2.js"]
+arg source_file present=true count=1 ["main.ts"]
+> ["p1.js","./p2.js"]
+arg script_arg present=true count=1 ["./p2.js"]
+> ["deno","test","--preload","p1.js","--import","./p2.js"]
+subcommand test
+arg preload present=true count=1 ["p1.js","./p2.js"]
+> ["deno","bench","--preload","p1.js","--import","./p2.js"]
+subcommand bench
+arg preload present=true count=1 ["p1.js","./p2.js"]
+> ["deno","run","--require","require.js","main.ts"]
+subcommand run
+arg require present=true count=1 ["require.js"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["require.js"]
+> ["deno","run","--require","r1.js","--require","./r2.js","main.ts"]
+subcommand run
+arg require present=true count=1 ["r1.js","./r2.js"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["r1.js","./r2.js"]
+arg script_arg present=true count=1 ["./r2.js"]
+> ["deno","check","--v8-flags=--help","script.ts"]
+subcommand check
+arg v8-flags present=true count=1 ["--help"]
+arg files present=true count=1 ["script.ts"]
+> ["deno","run","--allow-all","--inspect","-A","script.ts"]
+subcommand run
+arg allow-all present=true count=2 []
+arg inspect present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect","--inspect-publish-uid=stderr,http","script.ts"]
+subcommand run
+arg inspect present=true count=1 []
+arg inspect-publish-uid present=true count=1 ["stderr,http"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect","--inspect-publish-uid=stderr","script.ts"]
+subcommand run
+arg inspect present=true count=1 []
+arg inspect-publish-uid present=true count=1 ["stderr"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect","--inspect-publish-uid=http","script.ts"]
+subcommand run
+arg inspect present=true count=1 []
+arg inspect-publish-uid present=true count=1 ["http"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--require","cli.js","script.ts"]
+subcommand run
+arg require present=true count=1 ["cli.js"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect-publish-uid=stderr","script.ts"]
+subcommand run
+arg inspect-publish-uid present=true count=1 ["stderr"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--inspect-brk=127.0.0.1:9444","script.ts"]
+subcommand run
+arg inspect-brk present=true count=1 ["127.0.0.1:9444"]
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","bump-version","patch"]
+subcommand bump-version
+arg increment present=true count=1 ["patch"]
+> ["deno","bump-version","minor"]
+subcommand bump-version
+arg increment present=true count=1 ["minor"]
+> ["deno","bump-version","major"]
+subcommand bump-version
+arg increment present=true count=1 ["major"]
+> ["deno","bump-version","prerelease"]
+subcommand bump-version
+arg increment present=true count=1 ["prerelease"]
+> ["deno","bump-version","premajor"]
+subcommand bump-version
+arg increment present=true count=1 ["premajor"]
+> ["deno","bump-version","preminor"]
+subcommand bump-version
+arg increment present=true count=1 ["preminor"]
+> ["deno","bump-version","prepatch"]
+subcommand bump-version
+arg increment present=true count=1 ["prepatch"]
+> ["deno","bump-version"]
+subcommand bump-version
+> ["deno","bump-version","invalid"]
+subcommand bump-version
+arg increment present=true count=1 ["invalid"]
+> ["deno","bump-version","--workspace","--dry-run","--start","v1.0.0","--base","main","--import-map","import_map.json","--release-notes","Releases.md"]
+subcommand bump-version
+arg workspace present=true count=1 []
+arg dry-run present=true count=1 []
+arg start present=true count=1 ["v1.0.0"]
+arg base present=true count=1 ["main"]
+arg import-map present=true count=1 ["import_map.json"]
+arg release-notes present=true count=1 ["Releases.md"]
+> ["deno","bump-version","patch","--config","package.json"]
+subcommand bump-version
+arg increment present=true count=1 ["patch"]
+arg config present=true count=1 ["package.json"]
+> ["deno","bump-version","-c","package.json","patch"]
+subcommand bump-version
+arg config present=true count=1 ["package.json"]
+arg increment present=true count=1 ["patch"]
+> ["deno","bump-version","patch","--no-workspace"]
+subcommand bump-version
+arg increment present=true count=1 ["patch"]
+arg no-workspace present=true count=1 []
+> ["deno","why","express"]
+subcommand why
+arg package present=true count=1 ["express"]
+> ["deno","why","express@4.18.2"]
+subcommand why
+arg package present=true count=1 ["express@4.18.2"]
+> ["deno","why","@scope/pkg"]
+subcommand why
+arg package present=true count=1 ["@scope/pkg"]
+> ["deno","why","@scope/pkg@1.0.0"]
+subcommand why
+arg package present=true count=1 ["@scope/pkg@1.0.0"]
+> ["deno","why"]
+error MissingRequired: "error: the following required arguments were not provided: package"
+> ["deno","audit"]
+subcommand audit
+> ["deno","audit","--fix"]
+subcommand audit
+arg fix present=true count=1 []
+> ["deno","audit","fix"]
+subcommand audit
+arg action present=true count=1 ["fix"]
+> ["deno","audit","bogus"]
+subcommand audit
+arg action present=true count=1 ["bogus"]
+> ["deno","transpile","main.ts"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+> ["deno","transpile","main.ts","helpers.ts"]
+subcommand transpile
+arg file present=true count=1 ["main.ts","helpers.ts"]
+> ["main.ts","helpers.ts"]
+arg script_arg present=true count=1 ["helpers.ts"]
+> ["deno","transpile","main.ts","-o","out.js"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg output present=true count=1 ["out.js"]
+> ["deno","transpile","main.ts","--outdir","dist"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg outdir present=true count=1 ["dist"]
+> ["deno","transpile","main.ts","--source-map","inline"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg source-map present=true count=1 ["inline"]
+> ["deno","transpile","main.ts","--source-map","separate"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg source-map present=true count=1 ["separate"]
+> ["deno","transpile","main.ts","--declaration"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg declaration present=true count=1 []
+> ["deno","transpile","main.ts","-o","out.js","--source-map","separate","--declaration"]
+subcommand transpile
+arg file present=true count=1 ["main.ts"]
+arg output present=true count=1 ["out.js"]
+arg source-map present=true count=1 ["separate"]
+arg declaration present=true count=1 []
+> ["deno","test","--sanitize-ops","--sanitize-resources","--coverage=cov","--coverage-threshold=80","--update-snapshots"]
+subcommand test
+arg sanitize-ops present=true count=1 []
+arg sanitize-resources present=true count=1 []
+arg coverage present=true count=1 ["cov"]
+arg coverage-threshold present=true count=1 ["80"]
+arg update-snapshots present=true count=1 []
+> ["deno","test","-u"]
+subcommand test
+arg update-snapshots present=true count=1 []
+> ["deno","test","--coverage-threshold=80"]
+error MissingRequired: "error: the following required arguments were not provided: --coverage"
+> ["deno","compile","--bundle","--minify","--app-name=MyApp","--exclude-unused-npm","main.ts"]
+subcommand compile
+arg bundle present=true count=1 []
+arg minify present=true count=1 []
+arg app-name present=true count=1 ["MyApp"]
+arg exclude-unused-npm present=true count=1 []
+arg source_file present=true count=1 ["main.ts"]
+> ["deno","compile","--minify","main.ts"]
+error MissingRequired: "error: the following required arguments were not provided: --bundle"
+> ["deno","install","--os","linux","--arch","x64"]
+subcommand install
+arg os present=true count=1 ["linux"]
+arg arch present=true count=1 ["x64"]
+> ["deno","install","--package-json","npm:foo"]
+subcommand install
+arg package-json present=true count=1 []
+arg cmd present=true count=1 ["npm:foo"]
+> ["deno","install","--global","--os","linux","foo"]
+error InvalidValue: "error: the argument '--os <os>' cannot be used with '--global'"
+> ["deno","uninstall","--package-json","foo"]
+subcommand uninstall
+arg package-json present=true count=1 []
+arg packages present=true count=1 ["foo"]
+> ["deno","remove","--package-json","foo"]
+subcommand remove
+arg package-json present=true count=1 []
+arg packages present=true count=1 ["foo"]
+> ["deno","check","--no-code-cache","main.ts"]
+subcommand check
+arg no-code-cache present=true count=1 []
+arg files present=true count=1 ["main.ts"]
+> ["deno","check","--watch","main.ts"]
+subcommand check
+arg watch present=true count=1 []
+arg files present=true count=1 ["main.ts"]
+> ["deno","serve","--open","main.ts"]
+subcommand serve
+arg open present=true count=1 []
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","serve","--tunnel","main.ts"]
+subcommand serve
+arg tunnel present=true count=1 []
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","bundle","--check=all","main.ts"]
+subcommand bundle
+arg check present=true count=1 ["all"]
+arg file present=true count=1 ["main.ts"]
+> ["deno","bundle","--declaration","main.ts"]
+subcommand bundle
+arg declaration present=true count=1 []
+arg file present=true count=1 ["main.ts"]
+> ["deno","audit","--lock=deno.lock","--frozen"]
+subcommand audit
+arg lock present=true count=1 ["deno.lock"]
+arg frozen-lockfile present=true count=1 []
+> ["deno","why","--no-lock","foo"]
+subcommand why
+arg no-lock present=true count=1 []
+arg package present=true count=1 ["foo"]
+> ["deno","run","--node-modules-linker=isolated","main.ts"]
+subcommand run
+arg node-modules-linker present=true count=1 ["isolated"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","run","--linker=hoisted","main.ts"]
+subcommand run
+arg node-modules-linker present=true count=1 ["hoisted"]
+arg script_arg present=true count=1 ["main.ts"]
+> ["deno","upgrade","--unsafely-ignore-certificate-errors=example.com"]
+subcommand upgrade
+arg unsafely-ignore-certificate-errors present=true count=1 ["example.com"]
+> ["deno","x","--package=npm:foo","bar"]
+subcommand x
+arg package present=true count=1 ["npm:foo"]
+arg script_arg present=true count=1 ["bar"]
+> ["deno","desktop","--output=MyApp.app","--target=x86_64-unknown-linux-gnu","--icon=icon.png","--hmr","--all-targets","--backend=cef","--include=extra.ts","--exclude=skip.ts","--compress=zstd","--exclude-unused-npm","--allow-read","main.ts"]
+subcommand desktop
+arg output present=true count=1 ["MyApp.app"]
+arg target present=true count=1 ["x86_64-unknown-linux-gnu"]
+arg icon present=true count=1 ["icon.png"]
+arg hmr present=true count=1 []
+arg all-targets present=true count=1 []
+arg backend present=true count=1 ["cef"]
+arg include present=true count=1 ["extra.ts"]
+arg exclude present=true count=1 ["skip.ts"]
+arg compress present=true count=1 ["zstd"]
+arg exclude-unused-npm present=true count=1 []
+arg allow-read present=true count=1 []
+arg script_arg present=true count=1 ["main.ts"]
+> ["extra.ts"]
+> ["skip.ts"]
+> ["deno","desktop"]
+subcommand desktop
+> ["deno","test","--reporter=bogus"]
+error InvalidValue: "error: invalid value 'bogus' for '--reporter': possible values: pretty, dot, junit, tap"
+> ["deno","fmt","--prose-wrap=bogus","x.md"]
+error InvalidValue: "error: invalid value 'bogus' for '--prose-wrap': possible values: always, never, preserve"
+> ["deno","fmt","--ext=bogus","x"]
+error InvalidValue: "error: invalid value 'bogus' for '--ext': possible values: ts, tsx, js, jsx, mts, mjs, cts, cjs, md, json, jsonc, css, scss, less, html, xml, svg, svelte, vue, astro, yml, yaml, ipynb, sql, vto, njk"
+> ["deno","run","--ext=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--ext': possible values: ts, tsx, js, jsx, mts, mjs, cts, cjs"
+> ["deno","compile","--target=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--target': possible values: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin"
+> ["deno","desktop","--backend=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--backend': possible values: webview, cef, raw"
+> ["deno","desktop","--compress=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--compress': possible values: xz, lzma, zstd"
+> ["deno","transpile","--source-map=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--source-map': possible values: none, inline, separate"
+> ["deno","completions","bogus"]
+error InvalidValue: "error: invalid value 'bogus' for 'shell': possible values: bash, fish, powershell, zsh, fig"
+> ["deno","install","--os","bogus"]
+error InvalidValue: "error: invalid value 'bogus' for '--os': possible values: aix, android, darwin, freebsd, linux, openbsd, sunos, win32"
+> ["deno","install","--arch","bogus"]
+error InvalidValue: "error: invalid value 'bogus' for '--arch': possible values: arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x64"
+> ["deno","audit","--level=bogus"]
+error InvalidValue: "error: invalid value 'bogus' for '--level': possible values: low, moderate, high, critical"
+> ["deno","--log-level=bogus","run","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--log-level': possible values: trace, debug, info"
+> ["deno","run","--node-modules-dir=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--node-modules-dir': possible values: auto, true, manual, none, false"
+> ["deno","run","--node-modules-linker=bogus","x.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--node-modules-linker': possible values: isolated, hoisted"
+> ["deno","run","--seed=abc","x.ts"]
+error InvalidValue: "error: invalid value 'abc' for '--seed'"
+> ["deno","serve","--port=abc","x.ts"]
+error InvalidValue: "error: invalid value 'abc' for '--port'"
+> ["deno","serve","--port=99999","x.ts"]
+error InvalidValue: "error: invalid value '99999' for '--port'"
+> ["deno","list","--depth=abc"]
+error InvalidValue: "error: invalid value 'abc' for '--depth'"
+> ["deno","test","--retry=abc"]
+error InvalidValue: "error: invalid value 'abc' for '--retry'"
+> ["deno","test","--shuffle=abc"]
+error InvalidValue: "error: invalid value 'abc' for '--shuffle'"
+> ["deno","test","--coverage=cov","--coverage-threshold=101"]
+error InvalidValue: "error: invalid value '101' for '--coverage-threshold': must be in range 0..=100"
+> ["deno","fmt","--line-width=0","x.ts"]
+error InvalidValue: "error: invalid value '0' for '--line-width'"
+> ["deno","fmt","--indent-width=0","x.ts"]
+error InvalidValue: "error: invalid value '0' for '--indent-width'"
+> ["deno","serve","--port=8080","x.ts"]
+subcommand serve
+arg port present=true count=1 ["8080"]
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","test","--coverage=cov","--coverage-threshold=100"]
+subcommand test
+arg coverage present=true count=1 ["cov"]
+arg coverage-threshold present=true count=1 ["100"]
+> ["deno","fmt","--use-tabs=maybe","x.ts"]
+error InvalidValue: "error: invalid value 'maybe' for '--use-tabs'"
+> ["deno","fmt","--single-quote=maybe","x.ts"]
+error InvalidValue: "error: invalid value 'maybe' for '--single-quote'"
+> ["deno","run","--vendor=maybe","x.ts"]
+error InvalidValue: "error: invalid value 'maybe' for '--vendor'"
+> ["deno","run","--frozen=maybe","x.ts"]
+error InvalidValue: "error: invalid value 'maybe' for '--frozen-lockfile'"
+> ["deno","fmt","--use-tabs","x.ts"]
+subcommand fmt
+arg use-tabs present=true count=1 []
+arg files present=true count=1 ["x.ts"]
+> ["deno","run","--location","https://u:p@example.com/","x.ts"]
+subcommand run
+arg location present=true count=1 ["https://u:p@example.com/"]
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","run","--importmap=im.json","x.ts"]
+subcommand run
+arg import-map present=true count=1 ["im.json"]
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","run","--unsafe-proto","x.ts"]
+subcommand run
+arg unstable-unsafe-proto present=true count=1 []
+arg script_arg present=true count=1 ["x.ts"]
+> ["deno","install","--production","pkg"]
+subcommand install
+arg prod present=true count=1 []
+arg cmd present=true count=1 ["pkg"]
+> ["deno","ci","--production"]
+subcommand ci
+arg prod present=true count=1 []
+> ["deno","fmt","--options-use-tabs","x.ts"]
+subcommand fmt
+arg use-tabs present=true count=1 []
+arg files present=true count=1 ["x.ts"]
+> ["deno","jupyter","-d","deno","--install"]
+subcommand jupyter
+arg display present=true count=1 ["deno"]
+arg install present=true count=1 []
+> ["deno","pack","-o","out","x.ts"]
+subcommand pack
+arg output present=true count=1 ["out"]
+arg files present=true count=1 ["x.ts"]
+> ["deno","doc","--html","--json","x.ts"]
+error InvalidValue: "error: the argument '--html' cannot be used with '--json'"
+> ["deno","doc","--filter=x","--json","x.ts"]
+error InvalidValue: "error: the argument '--filter <filter>' cannot be used with '--json'"
+> ["deno","run","--coverage=c","--inspect","x.ts"]
+error InvalidValue: "error: the argument '--coverage <coverage>' cannot be used with '--inspect <inspect>'"
+> ["deno","test","--watch","--no-run"]
+error InvalidValue: "error: the argument '--watch <watch>' cannot be used with '--no-run'"
+> ["deno","lint","--rules-include=x","--rules"]
+error InvalidValue: "error: the argument '--rules-include <rules-include>' cannot be used with '--rules'"
+> ["deno","outdated","--latest","--compatible"]
+error InvalidValue: "error: the argument '--latest' cannot be used with '--compatible'"
+> ["deno","transpile","--output=o","--outdir=d","x.ts"]
+error InvalidValue: "error: the argument '--output <output>' cannot be used with '--outdir <outdir>'"
+> ["deno","x","--install-alias=dx","script.ts"]
+error InvalidValue: "error: the argument '--install-alias <install-alias>' cannot be used with '<script_arg>'"
+> ["deno","install","--npm","--jsr","pkg"]
+error InvalidValue: "error: the argument '--npm' cannot be used with '--jsr'"
+> ["deno","install","--global","--dev","pkg"]
+error InvalidValue: "error: the argument '--dev' cannot be used with '--global'"
+> ["deno","bump-version","-c","cfg","--workspace"]
+error InvalidValue: "error: the argument '--config <config>' cannot be used with '--workspace'"
+> ["deno","fmt","--fail-fast","x.ts"]
+error MissingRequired: "error: the following required arguments were not provided: --check"
+> ["deno","doc","--category-docs=c","x.ts"]
+error MissingRequired: "error: the following required arguments were not provided: --html"
+> ["deno","outdated","--interactive"]
+error MissingRequired: "error: the following required arguments were not provided: --update"
+> ["deno","coverage","--output=o","cov"]
+error MissingRequired: "error: the following required arguments were not provided: --lcov"
+> ["deno","install","--name","foo","pkg"]
+error MissingRequired: "error: the following required arguments were not provided: --global"
+> ["deno","fmt","--fail-fast","--check","x.ts"]
+subcommand fmt
+arg fail-fast present=true count=1 []
+arg check present=true count=1 []
+arg files present=true count=1 ["x.ts"]
+> ["deno","install","--global","--name","foo","pkg"]
+subcommand install
+arg global present=true count=1 []
+arg name present=true count=1 ["foo"]
+arg cmd present=true count=1 ["pkg"]
+> ["deno","link","../a","../b","--lockfile-only"]
+subcommand link
+arg paths present=true count=1 ["../a","../b"]
+arg lockfile-only present=true count=1 []
+> ["../a","../b"]
+arg script_arg present=true count=1 ["../b"]
+> ["deno","link","../a","--frozen"]
+subcommand link
+arg paths present=true count=1 ["../a"]
+arg frozen-lockfile present=true count=1 []
+> ["deno","link"]
+error MissingRequired: "error: the following required arguments were not provided: paths"
+> ["deno","unlink","@scope/name","../c"]
+subcommand unlink
+arg names_or_paths present=true count=1 ["@scope/name","../c"]
+> ["@scope/name","../c"]
+arg script_arg present=true count=1 ["../c"]
+> ["deno","unlink"]
+error MissingRequired: "error: the following required arguments were not provided: names_or_paths"
+> ["deno","eval","console.log(1)","--","a&b"]
+subcommand eval
+arg code_arg present=true count=1 ["console.log(1)"]
+trailing ["a&b"]
+> ["a&b"]
+> ["deno","run","x.ts","--","a&b"]
+subcommand run
+arg script_arg present=true count=1 ["x.ts"]
+trailing ["--","a&b"]
+> ["--","a&b"]
+arg script_arg present=true count=1 ["a&b"]
+> ["deno","run","--","-x.ts","a"]
+subcommand run
+arg script_arg present=true count=1 ["-x.ts"]
+trailing ["a"]
+> ["a"]
+> ["deno","--","-x.ts","a"]
+arg script_arg present=true count=1 ["-x.ts"]
+trailing ["a"]
+> ["deno","eval","--","-1"]
+subcommand eval
+arg code_arg present=true count=1 ["-1"]
+> ["deno","task","--","build","hello"]
+subcommand task
+arg task_name present=true count=1 ["build"]
+trailing ["hello"]
+> ["hello"]
+> ["deno","test","--","arg1"]
+subcommand test
+trailing ["arg1"]
+> ["arg1"]
+> ["deno","create","--","npm:vite"]
+error MissingRequired: "error: the following required arguments were not provided: package"
+> ["deno","init","--npm","--","vite","--","--serve"]
+subcommand init
+arg npm present=true count=1 []
+arg args present=true count=1 ["vite","--serve"]
+> ["deno","sync-types"]
+subcommand sync-types
+> ["deno","sync-types","a.ts","tools/"]
+subcommand sync-types
+arg roots present=true count=1 ["a.ts","tools/"]
+> ["a.ts","tools/"]
+arg script_arg present=true count=1 ["tools/"]
+> ["deno","sync-types","--allow-import=example.com"]
+subcommand sync-types
+arg allow-import present=true count=1 ["example.com"]
+> ["deno","serve","x.ts","--","-a"]
+subcommand serve
+arg script_arg present=true count=1 ["x.ts"]
+trailing ["--","-a"]
+> ["--","-a"]
+error UnknownFlag: "error: unexpected argument '-a' found"
+> ["deno","compile","x.ts","--","-a"]
+subcommand compile
+arg source_file present=true count=1 ["x.ts"]
+trailing ["--","-a"]
+> ["deno","upgrade","--no-delta"]
+subcommand upgrade
+arg no-delta present=true count=1 []
+> ["deno","run","--use-env-proxy","script.ts"]
+subcommand run
+arg use-env-proxy present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--no-use-env-proxy","script.ts"]
+subcommand run
+arg no-use-env-proxy present=true count=1 []
+arg script_arg present=true count=1 ["script.ts"]
+> ["deno","run","--use-env-proxy","--no-use-env-proxy","script.ts"]
+error InvalidValue: "error: the argument '--use-env-proxy' cannot be used with '--no-use-env-proxy'"
+> ["deno","deploy"]
+subcommand deploy
+> ["deno","deploy","--prod"]
+subcommand deploy
+trailing ["--prod"]
+> ["deno","deploy","--project=myapp","--prod","-y"]
+subcommand deploy
+trailing ["--project=myapp","--prod","-y"]
+> ["--project=myapp","--prod","-y"]
+error UnknownFlag: "error: unexpected argument '--prod' found"
+> ["deno","deploy","--prod","--","--allow-net","-A"]
+subcommand deploy
+trailing ["--prod","--","--allow-net","-A"]
+> ["--prod","--","--allow-net","-A"]
+arg script_arg present=true count=1 ["--allow-net"]
+trailing ["-A"]
+> ["deno","sandbox","--prod","arg"]
+subcommand sandbox
+trailing ["--prod","arg"]
+> ["--prod","arg"]
+arg script_arg present=true count=1 ["arg"]
+> ["deno","bundle","--sourcemap","main.ts"]
+subcommand bundle
+arg sourcemap present=true count=1 []
+arg file present=true count=1 ["main.ts"]
+> ["deno","bundle","main.ts"]
+subcommand bundle
+arg file present=true count=1 ["main.ts"]
+> ["deno","bundle","--sourcemap=bogus","main.ts"]
+error InvalidValue: "error: invalid value 'bogus' for '--sourcemap': possible values: linked, inline, external"

@@ -5,6 +5,10 @@
 //! - `goldens DIR`: write the root and every subcommand's help into DIR
 //! - `zig-defs`: print `zig/src/cli/defs.zig`
 //! - `zig-env-vars`: print `zig/src/cli/env_vars.zig`
+//! - `extract-argv FILE...`: print every `svec![...]` argv in the given Rust
+//!   test files as JSON lines (a parser test corpus)
+//! - `parse-corpus FILE`: parse each JSON-lines argv in FILE with the Rust
+//!   parser and print the results in the format of `zig/src/cli/parse.zig`
 
 #![allow(dead_code)]
 
@@ -16,6 +20,8 @@ mod env_vars;
 mod error;
 #[path = "../../../../libs/cli_parser/src/help.rs"]
 mod help;
+#[path = "../../../../libs/cli_parser/src/parse.rs"]
+mod parse;
 #[path = "../../../../libs/cli_parser/src/permission_help.rs"]
 mod permission_help;
 #[path = "../../../../libs/cli_parser/src/types.rs"]
@@ -58,9 +64,28 @@ fn main() {
     }
     ["zig-defs"] => print!("{}", zig_defs()),
     ["zig-env-vars"] => print!("{}", zig_env_vars()),
+    ["extract-argv", files @ ..] => {
+      let mut seen = std::collections::HashSet::new();
+      for file in files {
+        let src = std::fs::read_to_string(file).unwrap();
+        for argv in extract_argv(&src) {
+          let line = serde_json::to_string(&argv).unwrap();
+          if seen.insert(line.clone()) {
+            println!("{line}");
+          }
+        }
+      }
+    }
+    ["parse-corpus", file] => {
+      let src = std::fs::read_to_string(file).unwrap();
+      for line in src.lines().filter(|l| !l.is_empty()) {
+        let argv: Vec<String> = serde_json::from_str(line).unwrap();
+        print!("{}", render_parse(&argv));
+      }
+    }
     _ => {
       eprintln!(
-        "usage: zig_cli_reference help [COMMAND] | goldens DIR | zig-defs | zig-env-vars"
+        "usage: zig_cli_reference help [COMMAND] | goldens DIR | zig-defs | zig-env-vars | extract-argv FILE... | parse-corpus FILE"
       );
       std::process::exit(2);
     }
@@ -363,4 +388,111 @@ fn zig_env_vars() -> String {
   }
   out.push_str("};\n");
   out
+}
+
+/// Render a parse result (or error) in a canonical text form. The Zig port
+/// renders the same form, so results can be compared line by line.
+fn render_parse(argv: &[String]) -> String {
+  let json = |s: &str| serde_json::to_string(s).unwrap();
+  let mut out = format!("> {}\n", serde_json::to_string(argv).unwrap());
+  match parse::parse(&defs::DENO_ROOT, argv) {
+    Ok(r) => {
+      if let Some(sub) = &r.subcommand {
+        writeln!(out, "subcommand {sub}").unwrap();
+      }
+      for a in &r.args {
+        let values: Vec<String> = a.values.iter().map(|v| json(v)).collect();
+        writeln!(
+          out,
+          "arg {} present={} count={} [{}]",
+          a.name,
+          a.is_present,
+          a.count,
+          values.join(",")
+        )
+        .unwrap();
+      }
+      if !r.trailing.is_empty() {
+        let t: Vec<String> = r.trailing.iter().map(|v| json(v)).collect();
+        writeln!(out, "trailing [{}]", t.join(",")).unwrap();
+      }
+    }
+    Err(e) => {
+      writeln!(out, "error {:?}: {}", e.kind, json(&e.to_string())).unwrap();
+    }
+  }
+  out
+}
+
+/// Find every `svec![...]` made only of string literals.
+fn extract_argv(src: &str) -> Vec<Vec<String>> {
+  let mut cases = Vec::new();
+  let mut rest = src;
+  while let Some(start) = rest.find("svec![") {
+    rest = &rest[start + "svec![".len()..];
+    if let Some((argv, len)) = parse_string_list(rest) {
+      cases.push(argv);
+      rest = &rest[len..];
+    }
+  }
+  cases
+}
+
+/// Parse `"a", r"b", "c"]` and return the strings and the length consumed,
+/// or None if the list contains anything but string literals.
+fn parse_string_list(src: &str) -> Option<(Vec<String>, usize)> {
+  let bytes = src.as_bytes();
+  let mut i = 0;
+  let mut out = Vec::new();
+  loop {
+    while i < bytes.len()
+      && (bytes[i].is_ascii_whitespace() || bytes[i] == b',')
+    {
+      i += 1;
+    }
+    match bytes.get(i)? {
+      b']' => return Some((out, i + 1)),
+      b'"' => {
+        let mut s = String::new();
+        i += 1;
+        let mut chars = src[i..].char_indices();
+        loop {
+          let (off, c) = chars.next()?;
+          match c {
+            '"' => {
+              i += off + 1;
+              break;
+            }
+            '\\' => {
+              let (_, e) = chars.next()?;
+              match e {
+                'n' => s.push('\n'),
+                'r' => s.push('\r'),
+                't' => s.push('\t'),
+                '0' => s.push('\0'),
+                '\\' | '"' | '\'' => s.push(e),
+                // Unicode escapes and line continuations are rare enough in
+                // the tests to skip those cases.
+                _ => return None,
+              }
+            }
+            c => s.push(c),
+          }
+        }
+        out.push(s);
+      }
+      b'r' => {
+        let hashes = src[i + 1..].bytes().take_while(|b| *b == b'#').count();
+        if bytes.get(i + 1 + hashes) != Some(&b'"') {
+          return None;
+        }
+        let body_start = i + 2 + hashes;
+        let end = format!("\"{}", "#".repeat(hashes));
+        let len = src[body_start..].find(&end)?;
+        out.push(src[body_start..body_start + len].to_string());
+        i = body_start + len + end.len();
+      }
+      _ => return None,
+    }
+  }
 }
