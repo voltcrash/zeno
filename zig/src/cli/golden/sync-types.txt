@@ -1,0 +1,7 @@
+Generate a tsconfig.json and type mappings so stock TypeScript tooling can type-check the project
+
+Usage: deno sync-types [OPTIONS] [ROOTS]...
+
+Options:
+  -I, --allow-import[=VALUE...]  Allow importing from remote hosts. Optionally specify allowed IP addresses and host names, with ports as necessary. Default value: deno.land:443,jsr.io:443,esm.sh:443,raw.esm.sh:443,cdn.jsdelivr.net:443,raw.githubusercontent.com:443,gist.githubusercontent.com:443
+      --deny-import[=VALUE...]  Deny importing from remote hosts. Optionally specify denied IP addresses and host names, with ports as necessary.

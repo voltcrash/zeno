@@ -1,0 +1,11 @@
+Initialize a new project
+
+Usage: deno init [OPTIONS] [ARGS]...
+
+Options:
+      --lib               Generate an example library project
+      --serve             Generate an example project for `deno serve`
+      --npm               Generate a npm create-* project
+      --jsr               Generate a project from a JSR package
+      --empty             Generate a minimal project with just main.ts and deno.json
+  -y, --yes               Bypass the prompt and run with full permissions

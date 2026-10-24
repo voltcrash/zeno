@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const flags = @import("cli/flags.zig");
+const defs = @import("cli/defs.zig");
 const help = @import("cli/help.zig");
 const version = @import("version.zig");
 
@@ -28,10 +29,7 @@ pub fn main(init: std.process.Init) !u8 {
     const code: u8 = switch (parsed.action) {
         .version_short => printStdout(out, version.render, .{false}),
         .version_long => printStdout(out, version.render, .{true}),
-        .help => |cmd| if (cmd) |c|
-            printStdout(out, help.renderCommand, .{c})
-        else
-            printStdout(out, help.renderRoot, .{}),
+        .help => |cmd| printStdout(out, help.render, .{cmd orelse &defs.root}),
         .subcommand => |cmd| try notPorted(err, cmd.name),
         .default_run => try notPorted(err, "run"),
         .default_repl => try notPorted(err, "repl"),

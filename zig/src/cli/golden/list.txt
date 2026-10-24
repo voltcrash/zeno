@@ -1,0 +1,9 @@
+List the dependencies declared in deno.json / package.json
+
+Usage: deno list [OPTIONS] [FILTERS]...
+
+Options:
+      --depth <VALUE>     Maximum depth of the dependency tree to display (0 = direct dependencies only)
+      --prod              Only list production dependencies
+      --dev               Only list development dependencies
+  -r, --recursive         Include all workspace members

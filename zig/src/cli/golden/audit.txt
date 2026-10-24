@@ -1,0 +1,14 @@
+Audit currently installed dependencies
+
+Usage: deno audit [OPTIONS] [ACTION]
+
+Options:
+      --level <VALUE>     Only show advisories with severity greater or equal to the one specified
+      --ignore-unfixable  Ignore advisories that don't have any actions to resolve them
+      --ignore-registry-errors  Return exit code 0 if remote service(s) responds with an error.
+      --socket            Check against socket.dev vulnerability database
+      --fix               Automatically fix vulnerabilities by upgrading packages
+      --ignore[=VALUE...]  Ignore advisories matching the given CVE IDs
+      --lock [<VALUE>]    Check the specified lock file. (If value is not provided, defaults to "./deno.lock")
+      --no-lock           Disable auto discovery of the lock file
+      --frozen-lockfile[=<VALUE>]  Error out if lockfile is out of date

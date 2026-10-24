@@ -1,0 +1,6 @@
+Generate shell completions
+
+Usage: deno completions [OPTIONS] <SHELL>
+
+Options:
+      --dynamic           Generate dynamic completions for the given shell (unstable), currently this only provides available tasks for `deno task`.

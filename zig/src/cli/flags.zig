@@ -9,10 +9,9 @@
 const std = @import("std");
 const types = @import("types.zig");
 const Arg = types.Arg;
-const Command = types.Command;
+const CommandDef = types.CommandDef;
 const Tag = types.Tag;
-const command_table = @import("command_table.zig");
-const global_args = @import("global_args.zig");
+const defs = @import("defs.zig");
 
 pub const LogLevel = enum { trace, debug, info };
 
@@ -22,9 +21,9 @@ pub const Action = union(enum) {
     /// `--version`: print the multi-line version info.
     version_long,
     /// `--help` / `deno help [command]`. `null` means the root help.
-    help: ?Command,
+    help: ?*const CommandDef,
     /// An explicit subcommand, e.g. `deno fmt`.
-    subcommand: Command,
+    subcommand: *const CommandDef,
     /// No subcommand given, but there are arguments: `deno script.ts`
     /// behaves like `deno run script.ts`.
     default_run,
@@ -79,7 +78,7 @@ pub fn parse(args: []const []const u8, diag: *Diagnostic) Error!Flags {
     var state: State = .{};
 
     var i: usize = 0;
-    const sub: ?Command = while (i < args.len) {
+    const sub: ?*const CommandDef = while (i < args.len) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--")) break null;
 
@@ -107,11 +106,12 @@ pub fn parse(args: []const []const u8, diag: *Diagnostic) Error!Flags {
     var version = state.version;
     if (sub) |cmd| {
         flags.args = args[i + 1 ..];
-        if (cmd.tag == .help) {
+        scanSubcommandArgs(cmd, flags.args, &help, &version);
+        if (cmd.tag.? == .help and !help and version == null) {
+            // `deno help [COMMAND]`; unknown commands show the root help.
             flags.action = .{ .help = if (flags.args.len > 0) findCommand(flags.args[0]) else null };
             return flags;
         }
-        scanSubcommandArgs(cmd, flags.args, &help, &version);
         if (version) |v| {
             flags.action = v;
         } else if (help) {
@@ -137,7 +137,7 @@ pub fn parse(args: []const []const u8, diag: *Diagnostic) Error!Flags {
 
 /// Look for `--help` / `--version` among a subcommand's arguments, stopping
 /// where the arguments start being forwarded to the program being run.
-fn scanSubcommandArgs(cmd: Command, args: []const []const u8, help: *bool, version: *?Action) void {
+fn scanSubcommandArgs(cmd: *const CommandDef, args: []const []const u8, help: *bool, version: *?Action) void {
     if (cmd.passthrough) return;
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--")) return;
@@ -145,15 +145,15 @@ fn scanSubcommandArgs(cmd: Command, args: []const []const u8, help: *bool, versi
             std.mem.startsWith(u8, arg, "--help="))
         {
             help.* = true;
-        } else if (cmd.tag != .upgrade and std.mem.eql(u8, arg, "--version")) {
+        } else if (cmd.tag.? != .upgrade and std.mem.eql(u8, arg, "--version")) {
             // `deno upgrade --version <v>` has its own `--version` flag.
             version.* = .version_long;
-        } else if (cmd.tag != .upgrade and (std.mem.eql(u8, arg, "-V") or std.mem.eql(u8, arg, "-v"))) {
+        } else if (cmd.tag.? != .upgrade and (std.mem.eql(u8, arg, "-V") or std.mem.eql(u8, arg, "-v"))) {
             version.* = .version_short;
         } else if (arg.len == 0 or arg[0] != '-') {
             // The first positional of a trailing command starts the
             // arguments forwarded to the script.
-            if (cmd.trailing) return;
+            if (cmd.trailing_var_arg) return;
         }
     }
 }
@@ -205,7 +205,7 @@ fn applyGlobal(state: *State, def: Arg, value: ?[]const u8, long_form: bool, dia
     } else if (std.mem.eql(u8, name, "log-level")) {
         const v = value.?;
         state.flags.log_level = std.meta.stringToEnum(LogLevel, v) orelse {
-            diag.* = .{ .kind = .invalid_value, .flag = def.long.?, .value = v, .choices = def.choices };
+            diag.* = .{ .kind = .invalid_value, .flag = def.long.?, .value = v, .choices = def.value_parser.?.choices };
             return error.InvalidArgs;
         };
     } else if (std.mem.eql(u8, name, "env-file")) {
@@ -219,18 +219,17 @@ fn missingValue(diag: *Diagnostic, def: Arg) Error {
 }
 
 fn findGlobalLong(name: []const u8) ?Arg {
-    for (global_args.all) |a| if (a.matchesLong(name)) return a;
+    for (defs.global_args) |a| if (a.matchesLong(name)) return a;
     return null;
 }
 
 fn findGlobalShort(c: u8) ?Arg {
-    for (global_args.all) |a| if (a.matchesShort(c)) return a;
+    for (defs.global_args) |a| if (a.matchesShort(c)) return a;
     return null;
 }
 
-pub fn findCommand(name: []const u8) ?Command {
-    for (command_table.all) |c| if (c.matches(name)) return c;
-    return null;
+pub fn findCommand(name: []const u8) ?*const CommandDef {
+    return defs.root.findSubcommand(name);
 }
 
 // ------------------------------------------------------------------ tests
@@ -242,7 +241,7 @@ fn testParse(args: []const []const u8) !Flags {
 
 fn expectSubcommand(args: []const []const u8, tag: Tag) !void {
     const f = try testParse(args);
-    try std.testing.expectEqual(tag, f.action.subcommand.tag);
+    try std.testing.expectEqual(tag, f.action.subcommand.tag.?);
 }
 
 test "bare deno starts the repl" {
@@ -261,14 +260,14 @@ test "subcommands and aliases" {
 
 test "global flags before the subcommand" {
     const f = try testParse(&.{ "-q", "--log-level", "debug", "fmt", "--check" });
-    try std.testing.expectEqual(Tag.fmt, f.action.subcommand.tag);
+    try std.testing.expectEqual(Tag.fmt, f.action.subcommand.tag.?);
     try std.testing.expect(f.quiet);
     try std.testing.expectEqual(LogLevel.debug, f.log_level.?);
     try std.testing.expectEqual(@as(usize, 1), f.args.len);
     try std.testing.expectEqualStrings("--check", f.args[0]);
 
     const g = try testParse(&.{ "-Linfo", "--env-file=.env", "test" });
-    try std.testing.expectEqual(Tag.@"test", g.action.subcommand.tag);
+    try std.testing.expectEqual(Tag.@"test", g.action.subcommand.tag.?);
     try std.testing.expectEqual(LogLevel.info, g.log_level.?);
 }
 
@@ -293,11 +292,13 @@ test "version flags" {
 }
 
 test "help flags" {
-    try std.testing.expectEqual(@as(?Command, null), (try testParse(&.{"--help"})).action.help);
-    try std.testing.expectEqual(@as(?Command, null), (try testParse(&.{"-h"})).action.help);
-    try std.testing.expectEqual(Tag.fmt, (try testParse(&.{ "fmt", "-h" })).action.help.?.tag);
-    try std.testing.expectEqual(Tag.lint, (try testParse(&.{ "help", "lint" })).action.help.?.tag);
-    try std.testing.expectEqual(@as(?Command, null), (try testParse(&.{"help"})).action.help);
+    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"--help"})).action.help);
+    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"-h"})).action.help);
+    try std.testing.expectEqual(Tag.fmt, (try testParse(&.{ "fmt", "-h" })).action.help.?.tag.?);
+    try std.testing.expectEqual(Tag.lint, (try testParse(&.{ "help", "lint" })).action.help.?.tag.?);
+    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"help"})).action.help);
+    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{ "help", "nope" })).action.help);
+    try std.testing.expectEqual(Tag.help, (try testParse(&.{ "help", "--help" })).action.help.?.tag.?);
     // After the script, `--help` belongs to the script.
     try expectSubcommand(&.{ "run", "main.ts", "--help" }, .run);
     try expectSubcommand(&.{ "fmt", "--", "--help" }, .fmt);

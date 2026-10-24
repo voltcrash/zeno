@@ -1,0 +1,16 @@
+# Compiles the dependency-free modules of the Rust `deno_cli_parser` (the
+# command tables and help renderer) without building deno_runtime or V8, and
+# uses them to generate the Zig port's tables and golden help files:
+#
+#   zig/tools/regen_cli.sh
+
+[package]
+name = "zig_cli_reference"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

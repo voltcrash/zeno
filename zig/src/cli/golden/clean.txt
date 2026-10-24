@@ -1,0 +1,10 @@
+Remove the cache directory
+
+Usage: deno clean [OPTIONS] [EXCEPT-PATHS]...
+
+Options:
+  -e, --except            Retain cache data needed by the given files
+      --dry-run           Show what would be removed without performing any actions
+      --node-modules-dir[=<VALUE>]  Selects the node_modules directory mode for npm packages (not a path). One of: auto (create a local node_modules directory and install npm packages into it), manual (use the existing local node_modules directory, do not modify it), none (do not use a local node_modules directory; resolve npm packages from the global cache). Defaults to auto when the flag is passed without a value.
+      --vendor[=<VALUE>]  Toggles local vendor folder usage for remote modules and a node_modules folder for npm packages
+      --node-modules-linker <VALUE>  Sets the linker mode for npm packages (isolated or hoisted)

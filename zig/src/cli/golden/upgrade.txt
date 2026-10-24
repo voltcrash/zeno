@@ -1,0 +1,17 @@
+Upgrade deno executable to given version
+
+Usage: deno upgrade [OPTIONS] <VERSION-OR-HASH-OR-CHANNEL> [PR-NUMBER-POSITIONAL]
+
+Options:
+      --dry-run           Perform all checks without replacing old exe
+  -f, --force             Replace current exe even if not out-of-date
+      --canary            Upgrade to canary builds
+      --release-candidate  Upgrade to a release candidate
+      --version <VALUE>   The version to upgrade to
+  -o, --output <VALUE>    The path to output the updated version to
+      --cert <VALUE>      Load certificate authority from PEM encoded file
+      --unsafely-ignore-certificate-errors [VALUE...]  DANGER: Disables verification of TLS certificates
+      --pr <VALUE>        
+      --checksum <VALUE>  Verify the downloaded archive against the provided SHA256 checksum
+      --branch <VALUE>    
+      --no-delta          Disable delta updates and always download the full archive

@@ -6,10 +6,12 @@ on:
       - main
     paths:
       - 'zig/**'
+      - 'libs/cli_parser/**'
       - '.github/workflows/zig.yml'
   pull_request:
     paths:
       - 'zig/**'
+      - 'libs/cli_parser/**'
       - '.github/workflows/zig.yml'
 
 jobs:
@@ -31,6 +33,9 @@ jobs:
       - name: Check formatting
         if: runner.os == 'Linux'
         run: zig fmt --check .
+      - name: Check generated CLI tables are up to date
+        if: runner.os == 'Linux'
+        run: ./tools/regen_cli.sh && git diff --exit-code -- src/cli
       - name: Build
         run: zig build
       - name: Test
