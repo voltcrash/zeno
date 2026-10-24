@@ -11,4 +11,8 @@ gen=tools/cli_reference/target/debug/zig_cli_reference
 rm -rf src/cli/golden
 mkdir -p src/cli/golden
 "$gen" goldens src/cli/golden
+mkdir -p src/cli/testdata
+"$gen" extract-argv ../libs/cli_parser/src/tests.rs ../libs/cli_parser/src/tests_full.rs \
+  > src/cli/testdata/parse_corpus.jsonl
+"$gen" parse-corpus src/cli/testdata/parse_corpus.jsonl > src/cli/testdata/parse_corpus.golden
 zig fmt src/cli/defs.zig src/cli/env_vars.zig > /dev/null

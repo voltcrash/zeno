@@ -31,7 +31,10 @@ Requires Zig 0.17.0.
   `libs/cli_parser`. `tools/cli_reference` compiles the dependency-free parts of
   the Rust parser (without building the rest of Deno) to generate the Zig
   command tables and golden help files; run `tools/regen_cli.sh` after changing
-  `libs/cli_parser`. CI fails if the generated files are stale.
+  `libs/cli_parser`. CI fails if the generated files are stale. The argv parser
+  is checked against every argv list in the Rust parser's tests (740 cases): the
+  Rust parser's result for each is recorded in `src/cli/testdata`, and the Zig
+  parser must produce the same values, trailing args and error messages.
 - **Third-party Rust crates** (swc, dprint, deno_lint, deno_graph, tokio, hyper,
   rustls, ...) are the hardest part. Each one gets a plan when its phase comes
   up: Zig's std library where it covers the need (networking, TLS, compression,
@@ -69,11 +72,12 @@ Requires Zig 0.17.0.
 
 ## Current state
 
-Command-line routing works: global flags, subcommands and aliases,
-`deno <script>` defaulting to `run`, bare `deno` meaning the REPL,
-`--help`/`help <command>`, and `--version`/`-V`. Every command's argument table
-is ported, and `--help` for the root and all subcommands matches the Rust output
-byte-for-byte. Every subcommand exits with "has not been ported to Zig yet".
+The CLI parses arguments exactly like the Rust parser: global flags, subcommands
+and aliases, every command's flags (values, delimiters, `--` handling, trailing
+args, value validation, conflicts and requirements) and the same error messages
+and "did you mean" tips. `--help` for the root and all subcommands matches the
+Rust output byte-for-byte. `--version`/`-V` work. Every subcommand exits with
+"has not been ported to Zig yet".
 
-Phase 1 next steps: port the generic argv parser (`parse.rs`), then the
-conversion into typed `Flags` (`convert.rs`) along with its tests.
+Phase 1 next step: the conversion of parse results into typed `Flags`
+(`convert.rs`) along with its tests (`tests_full.rs`).

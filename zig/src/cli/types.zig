@@ -14,6 +14,11 @@ pub const NumArgs = union(enum) {
     optional,
     zero_or_more,
     one_or_more,
+
+    /// Whether this is `exact = 0`, i.e. the arg never takes a value.
+    pub fn isNone(self: NumArgs) bool {
+        return self == .exact and self.exact == 0;
+    }
 };
 
 /// What the parser does when it encounters an argument.

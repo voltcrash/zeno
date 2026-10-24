@@ -1,32 +1,37 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
-//! Top-level argument routing, ported from `resolve_subcommand` in
-//! `libs/cli_parser/src/parse.rs` and the dispatch in `convert.rs`.
+//! Top-level flag handling, ported from `flags_from_vec` and the dispatch in
+//! `libs/cli_parser/src/convert.rs`.
 //!
-//! This walks past global flags to find the subcommand (if any), and
-//! recognizes `--help` / `--version`. Parsing of each subcommand's own flags
-//! is not ported yet; the remaining argv is handed to the subcommand as-is.
+//! This parses argv with `parse.zig` and decides what to do: print the
+//! version or help, run a subcommand, or fall back to `run`/the REPL when no
+//! subcommand was given. Conversion of each subcommand's values into typed
+//! flags is not ported yet.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const defs = @import("defs.zig");
+const parse_mod = @import("parse.zig");
 const types = @import("types.zig");
-const Arg = types.Arg;
 const CommandDef = types.CommandDef;
 const Tag = types.Tag;
-const defs = @import("defs.zig");
+pub const CliError = parse_mod.CliError;
+pub const ParseResult = parse_mod.ParseResult;
+pub const Error = parse_mod.Error;
 
-pub const LogLevel = enum { trace, debug, info };
+pub const LogLevel = enum { trace, debug, info, warn, @"error" };
 
 pub const Action = union(enum) {
     /// `-V`: print `deno <version>`.
     version_short,
     /// `--version`: print the multi-line version info.
     version_long,
-    /// `--help` / `deno help [command]`. `null` means the root help.
-    help: ?*const CommandDef,
+    /// `--help` or `deno help [command]`.
+    help: *const CommandDef,
     /// An explicit subcommand, e.g. `deno fmt`.
     subcommand: *const CommandDef,
-    /// No subcommand given, but there are arguments: `deno script.ts`
-    /// behaves like `deno run script.ts`.
-    default_run,
+    /// No subcommand, but a script: `deno main.ts` is a bare `deno run`.
+    default_run: []const u8,
     /// Bare `deno`: start the REPL.
     default_repl,
 };
@@ -34,219 +39,184 @@ pub const Action = union(enum) {
 pub const Flags = struct {
     action: Action,
     log_level: ?LogLevel = null,
-    quiet: bool = false,
-    /// Arguments following the subcommand token (or, for `default_run`, all
-    /// arguments, including any non-global flags).
-    args: []const []const u8 = &.{},
+    /// The raw parse result, for the subcommand to convert.
+    result: ParseResult,
 };
 
-/// Details for a parse error, rendered by `Diagnostic.print`.
-pub const Diagnostic = struct {
-    kind: Kind = .missing_value,
-    /// Long name of the flag, without the leading `--`.
-    flag: []const u8 = "",
-    value: []const u8 = "",
-    choices: []const []const u8 = &.{},
+/// Parse `argv` (including the binary name). On `error.InvalidArgs`, `diag`
+/// describes the problem.
+pub fn parse(arena: Allocator, argv: []const []const u8, diag: *CliError) Error!Flags {
+    // Strip a trailing `\r` from each argument, so a shebang in a script with
+    // CRLF line endings (`#!/usr/bin/env -S deno run -A\r`) works.
+    const args = try arena.alloc([]const u8, argv.len);
+    for (argv, args) |a, *out| out.* = std.mem.trimEnd(u8, a, "\r");
 
-    pub const Kind = enum { missing_value, invalid_value };
+    const result = try parse_mod.parse(arena, &defs.root, args, diag);
+    var flags: Flags = .{ .action = .default_repl, .result = result };
 
-    pub fn print(self: Diagnostic, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        switch (self.kind) {
-            .missing_value => try w.print(
-                "error: a value is required for '--{s}' but none was supplied\n",
-                .{self.flag},
-            ),
-            .invalid_value => {
-                try w.print(
-                    "error: invalid value '{s}' for '--{s}': possible values: ",
-                    .{ self.value, self.flag },
-                );
-                for (self.choices, 0..) |c, i| {
-                    if (i > 0) try w.writeAll(", ");
-                    try w.writeAll(c);
-                }
-                try w.writeByte('\n');
-            },
-        }
-    }
-};
-
-pub const Error = error{InvalidArgs};
-
-/// Parse `args` (argv without the binary name).
-pub fn parse(args: []const []const u8, diag: *Diagnostic) Error!Flags {
-    var state: State = .{};
-
-    var i: usize = 0;
-    const sub: ?*const CommandDef = while (i < args.len) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--")) break null;
-
-        if (std.mem.startsWith(u8, arg, "--")) {
-            const body = arg[2..];
-            const eq = std.mem.indexOfScalar(u8, body, '=');
-            const def = findGlobalLong(body[0 .. eq orelse body.len]) orelse break null;
-            i += 1;
-            var value: ?[]const u8 = if (eq) |e| body[e + 1 ..] else null;
-            if (value == null and def.takesSeparateValue()) {
-                if (i >= args.len) return missingValue(diag, def);
-                value = args[i];
-                i += 1;
-            }
-            try applyGlobal(&state, def, value, true, diag);
-        } else if (arg.len > 1 and arg[0] == '-') {
-            if (!try parseShortCluster(&state, args, &i, diag)) break null;
-        } else {
-            break findCommand(arg);
-        }
-    } else null;
-
-    var flags = state.flags;
-    var help = state.help;
-    var version = state.version;
-    if (sub) |cmd| {
-        flags.args = args[i + 1 ..];
-        scanSubcommandArgs(cmd, flags.args, &help, &version);
-        if (cmd.tag.? == .help and !help and version == null) {
-            // `deno help [COMMAND]`; unknown commands show the root help.
-            flags.action = .{ .help = if (flags.args.len > 0) findCommand(flags.args[0]) else null };
-            return flags;
-        }
-        if (version) |v| {
-            flags.action = v;
-        } else if (help) {
-            flags.action = .{ .help = cmd };
-        } else {
-            flags.action = .{ .subcommand = cmd };
-        }
+    // A root `--version` (not a value-taking one like `upgrade --version
+    // 1.2.3`). `--version` prints the long form, `-V` the short one.
+    if (result.getBool("version") and result.getOne("version") == null) {
+        const long = for (args) |a| {
+            if (std.mem.eql(u8, a, "--version")) break true;
+        } else false;
+        flags.action = if (long) .version_long else .version_short;
         return flags;
     }
 
-    flags.args = args[i..];
-    if (version) |v| {
-        flags.action = v;
-    } else if (help) {
-        flags.action = .{ .help = null };
-    } else if (flags.args.len > 0) {
-        flags.action = .default_run;
-    } else {
-        flags.action = .default_repl;
+    if (result.contains("help")) {
+        flags.action = .{ .help = result.subcommand orelse &defs.root };
+        return flags;
     }
+
+    if (result.getOne("log-level")) |level| {
+        flags.log_level = std.meta.stringToEnum(LogLevel, level);
+    }
+    if (result.getBool("quiet")) flags.log_level = .@"error";
+
+    const sub = result.subcommand orelse {
+        flags.action = try defaultAction(arena, &result, diag);
+        return flags;
+    };
+    flags.action = if (sub.tag.? == .help)
+        .{ .help = if (result.getOne("subcommand")) |name| defs.root.findSubcommand(name) orelse &defs.root else &defs.root }
+    else
+        .{ .subcommand = sub };
     return flags;
 }
 
-/// Look for `--help` / `--version` among a subcommand's arguments, stopping
-/// where the arguments start being forwarded to the program being run.
-fn scanSubcommandArgs(cmd: *const CommandDef, args: []const []const u8, help: *bool, version: *?Action) void {
-    if (cmd.passthrough) return;
-    for (args) |arg| {
-        if (std.mem.eql(u8, arg, "--")) return;
-        if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or
-            std.mem.startsWith(u8, arg, "--help="))
-        {
-            help.* = true;
-        } else if (cmd.tag.? != .upgrade and std.mem.eql(u8, arg, "--version")) {
-            // `deno upgrade --version <v>` has its own `--version` flag.
-            version.* = .version_long;
-        } else if (cmd.tag.? != .upgrade and (std.mem.eql(u8, arg, "-V") or std.mem.eql(u8, arg, "-v"))) {
-            version.* = .version_short;
-        } else if (arg.len == 0 or arg[0] != '-') {
-            // The first positional of a trailing command starts the
-            // arguments forwarded to the script.
-            if (cmd.trailing_var_arg) return;
-        }
-    }
-}
-
-const State = struct {
-    flags: Flags = .{ .action = .default_repl },
-    help: bool = false,
-    version: ?Action = null,
+/// Commands that, given as the script of a bare `deno` invocation, mean a
+/// non-global flag was placed before the subcommand.
+const known_subcommands = [_][]const u8{
+    "run",      "watch",    "serve",   "eval",      "fmt",
+    "lint",     "test",     "upgrade", "cache",     "check",
+    "info",     "doc",      "task",    "bench",     "compile",
+    "coverage", "repl",     "install", "uninstall", "completions",
+    "init",     "create",   "jupyter", "publish",   "add",
+    "remove",   "outdated", "update",  "clean",     "approve-scripts",
+    "types",    "lsp",      "vendor",  "deploy",    "sandbox",
+    "bundle",   "audit",    "x",
 };
 
-/// Parse a cluster of short global flags such as `-q`, `-qL debug` or
-/// `-Ldebug`, advancing `i` past it (and past a separate value). Returns false
-/// without consuming anything if the cluster contains a non-global flag, which
-/// leaves it for the subcommand to parse.
-fn parseShortCluster(state: *State, args: []const []const u8, i: *usize, diag: *Diagnostic) Error!bool {
-    const arg = args[i.*];
-    for (arg[1..]) |c| {
-        const def = findGlobalShort(c) orelse return false;
-        // Whatever follows a flag that takes a value is that value.
-        if (def.takesSeparateValue()) break;
+fn isGlobalName(name: []const u8) bool {
+    for ([_][]const u8{ "script_arg", "log-level", "quiet", "unstable" }) |g| {
+        if (std.mem.eql(u8, name, g)) return true;
     }
-    i.* += 1;
-    for (arg[1..], 1..) |c, j| {
-        const def = findGlobalShort(c).?;
-        if (def.takesSeparateValue()) {
-            // The value is either the rest of the cluster or the next arg.
-            var value: []const u8 = arg[j + 1 ..];
-            if (value.len == 0) {
-                if (i.* >= args.len) return missingValue(diag, def);
-                value = args[i.*];
-                i.* += 1;
-            }
-            try applyGlobal(state, def, value, false, diag);
-            return true;
-        }
-        try applyGlobal(state, def, null, false, diag);
-    }
-    return true;
+    return false;
 }
 
-fn applyGlobal(state: *State, def: Arg, value: ?[]const u8, long_form: bool, diag: *Diagnostic) Error!void {
-    const name = def.name;
-    if (std.mem.eql(u8, name, "help")) {
-        state.help = true;
-    } else if (std.mem.eql(u8, name, "version")) {
-        state.version = if (long_form) .version_long else .version_short;
-    } else if (std.mem.eql(u8, name, "quiet")) {
-        state.flags.quiet = true;
-    } else if (std.mem.eql(u8, name, "log-level")) {
-        const v = value.?;
-        state.flags.log_level = std.meta.stringToEnum(LogLevel, v) orelse {
-            diag.* = .{ .kind = .invalid_value, .flag = def.long.?, .value = v, .choices = def.value_parser.?.choices };
-            return error.InvalidArgs;
+/// Port of `default_parse`: no subcommand was given.
+fn defaultAction(arena: Allocator, result: *const ParseResult, diag: *CliError) Error!Action {
+    if (result.getOne("script_arg")) |script| {
+        if (isKnownSubcommand(script)) try checkFlagsBeforeSubcommand(arena, result, script, diag);
+        return .{ .default_run = script };
+    }
+
+    // Flags that indicate the user meant to run a script but forgot it.
+    const has_v8_help = if (result.getMany("v8-flags")) |v| for (v) |f| {
+        if (std.mem.eql(u8, f, "--help")) break true;
+    } else false else false;
+    const has_run_flags = result.getBool("no-config") or
+        for ([_][]const u8{
+            "config", "import-map", "no-remote", "no-npm",
+            "lock",   "no-lock",    "reload",    "frozen-lockfile",
+            "cert",   "check",      "no-check",
+        }) |name| {
+            if (result.contains(name)) break true;
+        } else false;
+    if (has_run_flags and !has_v8_help) {
+        diag.* = .{
+            .kind = .MissingRequired,
+            .message = "[SCRIPT_ARG] may only be omitted with --v8-flags=--help, else to use the repl with arguments, please use the `deno repl` subcommand\n\nUsage: deno [OPTIONS] [COMMAND] [SCRIPT_ARG]...",
         };
-    } else if (std.mem.eql(u8, name, "env-file")) {
-        // TODO(zig-port): load env files once the runtime is ported.
+        return error.InvalidArgs;
     }
+    return .default_repl;
 }
 
-fn missingValue(diag: *Diagnostic, def: Arg) Error {
-    diag.* = .{ .kind = .missing_value, .flag = def.long.? };
+fn isKnownSubcommand(name: []const u8) bool {
+    for (known_subcommands) |k| if (std.mem.eql(u8, k, name)) return true;
+    return false;
+}
+
+/// `deno --allow-net fmt`: a non-global flag before the subcommand name made
+/// the parser treat the subcommand as a script.
+fn checkFlagsBeforeSubcommand(arena: Allocator, result: *const ParseResult, script: []const u8, diag: *CliError) Error!void {
+    const run = defs.root.findSubcommand("run").?;
+    var first_flag: ?[]const u8 = null;
+    var any = false;
+    for (result.args.items) |a| {
+        if (!a.is_present or isGlobalName(a.name)) continue;
+        any = true;
+        if (first_flag != null) continue;
+        var it = run.allArgs();
+        while (it.next()) |def| {
+            if (std.mem.eql(u8, def.name, a.name)) {
+                if (def.long) |l| first_flag = try std.fmt.allocPrint(arena, "--{s}", .{l});
+                break;
+            }
+        }
+    }
+    if (!any) return;
+    const flag = first_flag orelse "unknown";
+    diag.* = .{
+        .kind = .UnknownFlag,
+        .message = try std.fmt.allocPrint(arena, "unexpected argument '{s}' found", .{flag}),
+    };
+    // Only claim `<subcommand> <flag>` exists when the subcommand accepts it.
+    if (defs.root.findSubcommand(script)) |sub| {
+        if (sub.findArgLong(std.mem.trimStart(u8, flag, "-")) != null) {
+            diag.suggestion = try std.fmt.allocPrint(arena, "'{s} {s}' exists", .{ script, flag });
+        }
+    }
     return error.InvalidArgs;
-}
-
-fn findGlobalLong(name: []const u8) ?Arg {
-    for (defs.global_args) |a| if (a.matchesLong(name)) return a;
-    return null;
-}
-
-fn findGlobalShort(c: u8) ?Arg {
-    for (defs.global_args) |a| if (a.matchesShort(c)) return a;
-    return null;
-}
-
-pub fn findCommand(name: []const u8) ?*const CommandDef {
-    return defs.root.findSubcommand(name);
 }
 
 // ------------------------------------------------------------------ tests
 
-fn testParse(args: []const []const u8) !Flags {
-    var diag: Diagnostic = .{};
-    return parse(args, &diag);
-}
+const TestCtx = struct {
+    arena: std.heap.ArenaAllocator,
+    diag: CliError = undefined,
+
+    fn init() TestCtx {
+        return .{ .arena = .init(std.testing.allocator) };
+    }
+
+    fn deinit(self: *TestCtx) void {
+        self.arena.deinit();
+    }
+
+    fn parse(self: *TestCtx, args: []const []const u8) Error!Flags {
+        const argv = try self.arena.allocator().alloc([]const u8, args.len + 1);
+        argv[0] = "deno";
+        @memcpy(argv[1..], args);
+        return @import("flags.zig").parse(self.arena.allocator(), argv, &self.diag);
+    }
+};
 
 fn expectSubcommand(args: []const []const u8, tag: Tag) !void {
-    const f = try testParse(args);
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(args);
     try std.testing.expectEqual(tag, f.action.subcommand.tag.?);
 }
 
+fn expectHelp(args: []const []const u8, tag: ?Tag) !void {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(args);
+    try std.testing.expectEqual(tag, f.action.help.tag);
+}
+
+fn expectAction(args: []const []const u8, action: std.meta.Tag(Action)) !void {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(args);
+    try std.testing.expectEqual(action, std.meta.activeTag(f.action));
+}
+
 test "bare deno starts the repl" {
-    const f = try testParse(&.{});
-    try std.testing.expectEqual(Action.default_repl, f.action);
+    try expectAction(&.{}, .default_repl);
 }
 
 test "subcommands and aliases" {
@@ -258,60 +228,82 @@ test "subcommands and aliases" {
     try expectSubcommand(&.{"bump-version"}, .bump_version);
 }
 
-test "global flags before the subcommand" {
-    const f = try testParse(&.{ "-q", "--log-level", "debug", "fmt", "--check" });
+test "global flags" {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(&.{ "--log-level", "debug", "fmt", "--check" });
     try std.testing.expectEqual(Tag.fmt, f.action.subcommand.tag.?);
-    try std.testing.expect(f.quiet);
     try std.testing.expectEqual(LogLevel.debug, f.log_level.?);
-    try std.testing.expectEqual(@as(usize, 1), f.args.len);
-    try std.testing.expectEqualStrings("--check", f.args[0]);
+    try std.testing.expect(f.result.getBool("check"));
 
-    const g = try testParse(&.{ "-Linfo", "--env-file=.env", "test" });
-    try std.testing.expectEqual(Tag.@"test", g.action.subcommand.tag.?);
-    try std.testing.expectEqual(LogLevel.info, g.log_level.?);
+    // `--quiet` wins over `--log-level`.
+    const g = try t.parse(&.{ "-Linfo", "-q", "test" });
+    try std.testing.expectEqual(LogLevel.@"error", g.log_level.?);
 }
 
 test "script without subcommand defaults to run" {
-    const f = try testParse(&.{ "main.ts", "arg" });
-    try std.testing.expectEqual(Action.default_run, f.action);
-    try std.testing.expectEqual(@as(usize, 2), f.args.len);
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(&.{ "-A", "main.ts", "arg" });
+    try std.testing.expectEqualStrings("main.ts", f.action.default_run);
+    try std.testing.expect(f.result.getBool("allow-all"));
+    try std.testing.expectEqual(@as(usize, 1), f.result.trailing.items.len);
+}
 
-    // Non-global flags stop subcommand resolution.
-    const g = try testParse(&.{ "--allow-net", "fmt" });
-    try std.testing.expectEqual(Action.default_run, g.action);
-    try std.testing.expectEqual(@as(usize, 2), g.args.len);
+test "non-global flag before a subcommand" {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    try std.testing.expectError(error.InvalidArgs, t.parse(&.{ "--allow-net", "test" }));
+    try std.testing.expectEqualStrings("unexpected argument '--allow-net' found", t.diag.message);
+    try std.testing.expectEqualStrings("'test --allow-net' exists", t.diag.suggestion.?);
+
+    try std.testing.expectError(error.InvalidArgs, t.parse(&.{ "--allow-net", "fmt" }));
+    try std.testing.expectEqual(@as(?[]const u8, null), t.diag.suggestion);
+}
+
+test "repl flags without a script" {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    try std.testing.expectError(error.InvalidArgs, t.parse(&.{"--reload"}));
+    try std.testing.expectEqual(parse_mod.ErrorKind.MissingRequired, t.diag.kind);
+    try expectAction(&.{ "--reload", "--v8-flags=--help" }, .default_repl);
 }
 
 test "version flags" {
-    try std.testing.expectEqual(Action.version_long, (try testParse(&.{"--version"})).action);
-    try std.testing.expectEqual(Action.version_short, (try testParse(&.{"-V"})).action);
-    try std.testing.expectEqual(Action.version_short, (try testParse(&.{"-v"})).action);
-    try std.testing.expectEqual(Action.version_long, (try testParse(&.{ "fmt", "--version" })).action);
+    try expectAction(&.{"--version"}, .version_long);
+    try expectAction(&.{"-V"}, .version_short);
+    try expectAction(&.{"-v"}, .version_short);
+    try expectAction(&.{ "fmt", "--version" }, .version_long);
     // `upgrade --version` selects a version to upgrade to.
     try expectSubcommand(&.{ "upgrade", "--version", "2.0.0" }, .upgrade);
 }
 
-test "help flags" {
-    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"--help"})).action.help);
-    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"-h"})).action.help);
-    try std.testing.expectEqual(Tag.fmt, (try testParse(&.{ "fmt", "-h" })).action.help.?.tag.?);
-    try std.testing.expectEqual(Tag.lint, (try testParse(&.{ "help", "lint" })).action.help.?.tag.?);
-    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{"help"})).action.help);
-    try std.testing.expectEqual(@as(?*const CommandDef, null), (try testParse(&.{ "help", "nope" })).action.help);
-    try std.testing.expectEqual(Tag.help, (try testParse(&.{ "help", "--help" })).action.help.?.tag.?);
+test "help" {
+    try expectHelp(&.{"--help"}, null);
+    try expectHelp(&.{"-h"}, null);
+    try expectHelp(&.{ "fmt", "-h" }, .fmt);
+    try expectHelp(&.{ "help", "lint" }, .lint);
+    try expectHelp(&.{"help"}, null);
+    try expectHelp(&.{ "help", "nope" }, null);
+    try expectHelp(&.{ "help", "--help" }, .help);
     // After the script, `--help` belongs to the script.
     try expectSubcommand(&.{ "run", "main.ts", "--help" }, .run);
-    try expectSubcommand(&.{ "fmt", "--", "--help" }, .fmt);
-    // Passthrough commands never see `--help`.
+    // Passthrough commands forward `--help`.
     try expectSubcommand(&.{ "deploy", "--help" }, .deploy);
 }
 
-test "invalid global flag values" {
-    var diag: Diagnostic = .{};
-    try std.testing.expectError(error.InvalidArgs, parse(&.{ "--log-level", "loud" }, &diag));
-    try std.testing.expectEqual(Diagnostic.Kind.invalid_value, diag.kind);
-    try std.testing.expectEqualStrings("loud", diag.value);
+test "trailing carriage returns are stripped" {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    const f = try t.parse(&.{ "run", "--allow-net\r", "script.ts" });
+    try std.testing.expect(f.result.getBool("allow-net"));
+}
 
-    try std.testing.expectError(error.InvalidArgs, parse(&.{"--log-level"}, &diag));
-    try std.testing.expectEqual(Diagnostic.Kind.missing_value, diag.kind);
+test "invalid values" {
+    var t: TestCtx = .init();
+    defer t.deinit();
+    try std.testing.expectError(error.InvalidArgs, t.parse(&.{ "--log-level", "loud" }));
+    try std.testing.expectEqual(parse_mod.ErrorKind.InvalidValue, t.diag.kind);
+    try std.testing.expectError(error.InvalidArgs, t.parse(&.{"--log-level"}));
+    try std.testing.expectEqual(parse_mod.ErrorKind.MissingValue, t.diag.kind);
 }
