@@ -90,12 +90,17 @@ have no V8 for now.
   subcommands and aliases, every command's flags, and the same errors and "did
   you mean" tips. `--help` for the root and every subcommand matches the Rust
   output byte-for-byte. `--version`/`-V` work.
-- **V8** is linked, and `deno eval` runs code. `--print` works, and uncaught
-  exceptions print with their stack trace and exit with code 1. For now the code
-  runs as a classic script in a bare V8 context, with a temporary native
-  `console` that formats values with `String()`.
+- **V8** is linked with Deno's V8 flags (except Temporal, see above).
+- **Core:** the runtime sets up `Deno.core` and runs `libs/core`'s JavaScript
+  (`00_primordials.js`, `00_infra.js`, `02_timers.js`, `01_core.js`) unmodified.
+  Ops are plain Zig functions; `ops.op` generates their V8 bindings from the
+  function signature, like `#[op2]`. Only the built-in ops needed so far are
+  ported.
+- **`deno eval`** runs code and supports `--print`. Uncaught exceptions print
+  with their stack trace and exit with code 1. For now the code runs as a
+  classic script with a temporary native `console` that formats values with
+  `String()`.
 - Every other subcommand exits with "has not been ported to Zig yet".
 
-Next: phase 3, starting with ops and loading the runtime's JS (`ext/` and
-`runtime/js`). Then `console` comes from `ext/console`, and `deno eval` runs as
-an ES module.
+Next in phase 3: ES modules (`ext:core/mod.js`, `deno eval` as a module), async
+ops and the event loop (timers), then the rest of the built-in ops.

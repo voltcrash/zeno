@@ -18,12 +18,22 @@ pub const Object = c.Object;
 pub const FunctionCallbackInfo = c.FunctionCallbackInfo;
 pub const FunctionCallback = c.FunctionCallback;
 
-/// V8 flags always set by the port.
+/// V8 flags always set, from `v8_init` in `libs/core/runtime/setup.rs`.
 ///
-/// Temporal is disabled because V8 implements it on top of `temporal_rs`, a
-/// Rust crate that the prebuilt archive expects the embedder to link. It
-/// stays off until the port provides that API (see `rust_symbols.zig`).
-const default_flags = "--no-harmony-temporal";
+/// The one difference: Deno enables Temporal (`--harmony-temporal`), but V8
+/// implements it on top of `temporal_rs`, a Rust crate that the prebuilt
+/// archive expects the embedder to link. It stays off until the port
+/// provides that API (see `rust_symbols.zig`).
+const default_flags = "--no-validate-asm" ++
+    " --turbo_fast_api_calls" ++
+    " --no-harmony-temporal" ++
+    " --js-float16array" ++
+    " --js-explicit-resource-management" ++
+    " --js-source-phase-imports" ++
+    " --js-defer-import-eval" ++
+    // Installs a native `queueMicrotask` on the global object, used by
+    // `queueMicrotask` in `01_core.js`.
+    " --enable-queue-microtask";
 
 pub fn version() []const u8 {
     return std.mem.span(c.v8__V8__GetVersion());
@@ -142,6 +152,28 @@ pub const TryCatch = struct {
     }
 };
 
+/// A `v8::Global`: a handle that outlives handle scopes. Call `deinit` to
+/// release it.
+pub fn Global(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        data: *const c.Data,
+
+        pub fn init(isolate: *Isolate, value: *const T) Self {
+            return .{ .data = c.v8__Global__New(isolate, @ptrCast(value)) };
+        }
+
+        /// A local handle to the value, in the current handle scope.
+        pub fn get(self: Self, isolate: *Isolate) *const T {
+            return @ptrCast(c.v8__Local__New(isolate, self.data));
+        }
+
+        pub fn deinit(self: Self) void {
+            c.v8__Global__Reset(self.data);
+        }
+    };
+}
+
 pub fn newContext(isolate: *Isolate) *const Context {
     return c.v8__Context__New(isolate, null, null, null);
 }
@@ -169,6 +201,12 @@ pub fn toUtf8(gpa: std.mem.Allocator, isolate: *Isolate, context: *const Context
 pub fn setProperty(isolate: *Isolate, context: *const Context, object: *const Object, name: []const u8, value: *const Value) Error!void {
     const key = try newString(isolate, name);
     if (c.v8__Object__Set(object, context, @ptrCast(key), value) != .just_true) return error.JsException;
+}
+
+/// Get `object[name]`.
+pub fn getProperty(isolate: *Isolate, context: *const Context, object: *const Object, name: []const u8) Error!*const Value {
+    const key = try newString(isolate, name);
+    return c.v8__Object__Get(object, context, @ptrCast(key)) orelse error.JsException;
 }
 
 /// Create a function backed by a native callback.

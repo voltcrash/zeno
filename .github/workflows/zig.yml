@@ -7,11 +7,13 @@ on:
     paths:
       - 'zig/**'
       - 'libs/cli_parser/**'
+      - 'libs/core/*.js'
       - '.github/workflows/zig.yml'
   pull_request:
     paths:
       - 'zig/**'
       - 'libs/cli_parser/**'
+      - 'libs/core/*.js'
       - '.github/workflows/zig.yml'
 
 jobs:

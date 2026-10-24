@@ -12,6 +12,15 @@ const rusty_v8_archives = [_]struct { triple: []const u8, sha256: []const u8 }{
     .{ .triple = "x86_64-apple-darwin", .sha256 = "a750271fec6b211457ed0a5cf7d2eab1924b265621a82da86ab959d6ff0823e4" },
 };
 
+/// JavaScript sources of `libs/core`, embedded as `ext:core/<name>`.
+const core_js = [_][]const u8{
+    "00_primordials.js",
+    "00_infra.js",
+    "01_core.js",
+    "02_timers.js",
+    "mod.js",
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -33,6 +42,13 @@ pub fn build(b: *std.Build) void {
     });
     root_module.addOptions("build_options", options);
     if (v8_archive) |archive| linkV8(root_module, target.result, archive);
+    // The runtime's JavaScript sources live in the Rust tree and are shared
+    // with it; embed them from there.
+    for (core_js) |name| {
+        root_module.addAnonymousImport(b.fmt("ext:core/{s}", .{name}), .{
+            .root_source_file = b.path(b.fmt("../libs/core/{s}", .{name})),
+        });
+    }
 
     const exe = b.addExecutable(.{ .name = "deno", .root_module = root_module });
     b.installArtifact(exe);

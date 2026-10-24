@@ -21,6 +21,17 @@ pub const Message = opaque {};
 pub const MicrotaskQueue = opaque {};
 pub const FunctionCallbackInfo = opaque {};
 
+pub const Primitive = opaque {};
+pub const Boolean = opaque {};
+pub const Number = opaque {};
+pub const Integer = opaque {};
+pub const Array = opaque {};
+
+/// `v8::Maybe<T>`, returned through out-parameters.
+pub fn Maybe(comptime T: type) type {
+    return extern struct { has_value: bool, value: T };
+}
+
 pub const FunctionCallback = *const fn (*const FunctionCallbackInfo) callconv(.c) void;
 
 /// `v8::HandleScope` (three words in release builds of V8).
@@ -59,10 +70,17 @@ pub extern fn v8__Isolate__Enter(isolate: *Isolate) void;
 pub extern fn v8__Isolate__Exit(isolate: *Isolate) void;
 pub extern fn v8__Isolate__GetCurrentContext(isolate: *Isolate) *const Context;
 pub extern fn v8__Isolate__PerformMicrotaskCheckpoint(isolate: *Isolate) void;
+pub extern fn v8__Isolate__SetData(isolate: *Isolate, slot: u32, data: ?*anyopaque) void;
+pub extern fn v8__Isolate__GetData(isolate: *Isolate, slot: u32) ?*anyopaque;
 pub extern fn v8__Isolate__ThrowException(isolate: *Isolate, exception: *const Value) *const Value;
 
 pub extern fn v8__ArrayBuffer__Allocator__NewDefaultAllocator() *ArrayBufferAllocator;
 pub extern fn v8__ArrayBuffer__Allocator__DELETE(self: *ArrayBufferAllocator) void;
+
+// Handles
+pub extern fn v8__Global__New(isolate: *Isolate, other: *const Data) *const Data;
+pub extern fn v8__Global__Reset(data: *const Data) void;
+pub extern fn v8__Local__New(isolate: *Isolate, other: *const Data) *const Data;
 
 // Scopes
 pub extern fn v8__HandleScope__CONSTRUCT(buf: *HandleScope, isolate: *Isolate) void;
@@ -79,22 +97,46 @@ pub extern fn v8__Context__New(isolate: *Isolate, templ: ?*const ObjectTemplate,
 pub extern fn v8__Context__Enter(self: *const Context) void;
 pub extern fn v8__Context__Exit(self: *const Context) void;
 pub extern fn v8__Context__Global(self: *const Context) *const Object;
+pub extern fn v8__Context__GetExtrasBindingObject(self: *const Context) *const Object;
 
 // Values
+pub extern fn v8__Undefined(isolate: *Isolate) *const Primitive;
+pub extern fn v8__Null(isolate: *Isolate) *const Primitive;
+pub extern fn v8__Boolean__New(isolate: *Isolate, value: bool) *const Boolean;
+pub extern fn v8__Number__New(isolate: *Isolate, value: f64) *const Number;
+pub extern fn v8__Integer__New(isolate: *Isolate, value: i32) *const Integer;
+pub extern fn v8__Integer__NewFromUnsigned(isolate: *Isolate, value: u32) *const Integer;
+pub extern fn v8__Value__IsNull(self: *const Value) bool;
+pub extern fn v8__Value__IsNullOrUndefined(self: *const Value) bool;
+pub extern fn v8__Value__BooleanValue(self: *const Value, isolate: *Isolate) bool;
+pub extern fn v8__Value__NumberValue(self: *const Value, context: *const Context, out: *Maybe(f64)) void;
+pub extern fn v8__Value__Int32Value(self: *const Value, context: *const Context, out: *Maybe(i32)) void;
+pub extern fn v8__Value__Uint32Value(self: *const Value, context: *const Context, out: *Maybe(u32)) void;
+pub extern fn v8__Exception__Error(message: *const String) *const Value;
+pub extern fn v8__Exception__TypeError(message: *const String) *const Value;
+pub extern fn v8__Exception__RangeError(message: *const String) *const Value;
 pub extern fn v8__Value__IsUndefined(self: *const Value) bool;
 pub extern fn v8__Value__IsString(self: *const Value) bool;
+pub extern fn v8__Value__IsFunction(self: *const Value) bool;
+pub extern fn v8__Value__IsObject(self: *const Value) bool;
 pub extern fn v8__Value__ToString(self: *const Value, context: *const Context) ?*const String;
 pub extern fn v8__String__NewFromUtf8(isolate: *Isolate, data: [*]const u8, new_type: NewStringType, length: c_int) ?*const String;
 pub extern fn v8__String__Utf8Length(self: *const String, isolate: *Isolate) c_int;
 pub extern fn v8__String__WriteUtf8_v2(self: *const String, isolate: *Isolate, buffer: [*]u8, capacity: usize, flags: c_int, processed_characters_return: ?*usize) usize;
 pub extern fn v8__Object__Set(self: *const Object, context: *const Context, key: *const Value, value: *const Value) MaybeBool;
 pub extern fn v8__Object__New(isolate: *Isolate) *const Object;
+pub extern fn v8__Object__Get(self: *const Object, context: *const Context, key: *const Value) ?*const Value;
 
 // Functions
 pub extern fn v8__Function__New(context: *const Context, callback: FunctionCallback, data_or_null: ?*const Value, length: c_int, constructor_behavior: ConstructorBehavior, side_effect_type: SideEffectType) ?*const Function;
+pub extern fn v8__Function__Call(self: *const Function, context: *const Context, recv: *const Value, argc: c_int, argv: [*]const *const Value) ?*const Value;
 pub extern fn v8__FunctionCallbackInfo__GetIsolate(self: *const FunctionCallbackInfo) *Isolate;
 pub extern fn v8__FunctionCallbackInfo__Length(self: *const FunctionCallbackInfo) c_int;
 pub extern fn v8__FunctionCallbackInfo__Get(self: *const FunctionCallbackInfo, index: c_int) *const Value;
+pub extern fn v8__FunctionCallbackInfo__GetReturnValue(self: *const FunctionCallbackInfo) usize;
+/// `self` points at a `v8::ReturnValue<Value>`, which is one word: the value
+/// returned by `v8__FunctionCallbackInfo__GetReturnValue`.
+pub extern fn v8__ReturnValue__Value__Set(self: *usize, value: *const Value) void;
 
 // Scripts
 pub extern fn v8__ScriptOrigin__CONSTRUCT(
