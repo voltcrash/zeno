@@ -1,0 +1,15 @@
+Print coverage reports
+
+Usage: deno coverage [OPTIONS] [FILES]...
+
+Options:
+      --ignore[=VALUE...]  Ignore coverage files
+      --include[=VALUE...]  Include source files in the report
+      --exclude[=VALUE...]  Exclude source files from the report
+      --lcov              Output coverage report in lcov format
+      --html              Output coverage report in HTML format in the given directory
+      --detailed          Output coverage report in detailed format in the terminal
+      --threshold <VALUE>  Fail if coverage is below this percentage (0-100), applied to line, branch, and function coverage.
+                            Per-metric thresholds can be set in deno.json under "coverage": { "thresholds": { ... } }. The flag takes precedence.
+      --output <VALUE>    Exports the coverage report in lcov format to the given file.
+                            If no --output arg is specified then the report is written to stdout.

@@ -1,0 +1,29 @@
+Format source files
+
+Usage: deno fmt [OPTIONS] [FILES]...
+
+Options:
+      --check             Check if the source files are formatted
+      --fail-fast         Stop checking files on first format error
+      --permit-no-files   Don't return an error code if no files were found
+      --watch[=VALUE...]  Watch for file changes and restart process automatically.
+                            Local files from entry point module graph are watched by default.
+                            Additional paths might be watched by passing them as arguments to this flag.
+      --watch-exclude[=VALUE...]  Exclude provided files/patterns from watch mode
+      --no-clear-screen   Do not clear terminal screen when under watch mode
+      --ext <VALUE>       Set content type of the supplied file
+      --ignore[=VALUE...]  Ignore formatting particular source files
+      --use-tabs[=<VALUE>]  Use tabs instead of spaces for indentation [default: false]
+      --line-width <VALUE>  Define maximum line width [default: 80]
+      --indent-width <VALUE>  Define indentation width [default: 2]
+      --single-quote[=<VALUE>]  Use single quotes [default: false]
+      --prose-wrap <VALUE>  Define how prose should be wrapped [default: always]
+      --no-semicolons[=<VALUE>]  Don't use semicolons except where necessary [default: false]
+  -c, --config <VALUE>    Configure different aspects of deno including TypeScript, linting, and code formatting.
+                            Typically the configuration file will be called `deno.json` or `deno.jsonc` and
+                            automatically detected; in that case this flag is not necessary.
+                            Docs: https://docs.deno.com/go/config
+      --no-config         Disable automatic loading of the configuration file
+      --no-editorconfig   Don't read .editorconfig files to infer formatting options [default: false]
+      --unstable-component  Enable formatting Svelte, Vue, Astro and Angular files
+      --unstable-sql      Enable formatting SQL files.

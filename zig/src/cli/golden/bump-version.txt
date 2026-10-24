@@ -1,0 +1,17 @@
+Update version in the configuration file
+
+Usage: deno bump-version [OPTIONS] [INCREMENT]
+
+Options:
+  -w, --workspace         Bump every package in the workspace (auto-detected at the workspace root)
+      --no-workspace      Disable workspace mode and only bump the deno.json/package.json in the current directory
+      --dry-run           Print the planned changes without writing any files
+      --start <VALUE>     [conventional-commits mode] Git ref to start from. Default: latest tag (git describe --tags --abbrev=0)
+      --base <VALUE>      [conventional-commits mode] Git ref to compare against. Default: current branch
+      --import-map <VALUE>  Path to the import map to rewrite jsr: version constraints in. Defaults to the root deno.json (or its importMap target)
+      --release-notes <VALUE>  [conventional-commits mode] Path to the release notes file to prepend. Default: Releases.md
+  -c, --config <VALUE>    Explicit path to the manifest file to bump.
+                            May point to a `deno.json`/`deno.jsonc` or a `package.json`. When
+                            set, single-file mode is forced (workspace auto-detection is bypassed).
+                            Useful when both `deno.json` and `package.json` exist in the same
+                            directory.

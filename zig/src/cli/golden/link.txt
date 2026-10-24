@@ -1,0 +1,9 @@
+Link a local JSR package into the current project for development
+
+Usage: deno link [OPTIONS] <PATHS>...
+
+Options:
+      --lockfile-only     Install only updating the lockfile
+      --lock [<VALUE>]    Check the specified lock file. (If value is not provided, defaults to "./deno.lock")
+      --no-lock           Disable auto discovery of the lock file
+      --frozen-lockfile[=<VALUE>]  Error out if lockfile is out of date

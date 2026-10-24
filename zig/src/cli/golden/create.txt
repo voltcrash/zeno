@@ -1,0 +1,8 @@
+Create a project from a template
+
+Usage: deno create [OPTIONS] <PACKAGE>
+
+Options:
+      --npm               Treat unprefixed package names as npm packages
+      --jsr               Treat unprefixed package names as JSR packages
+  -y, --yes               Bypass the prompt and run with full permissions

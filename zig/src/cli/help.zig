@@ -6,25 +6,60 @@ const Writer = std.Io.Writer;
 
 const types = @import("types.zig");
 const Arg = types.Arg;
-const Command = types.Command;
-const command_table = @import("command_table.zig");
+const CommandDef = types.CommandDef;
+const defs = @import("defs.zig");
 const env_vars = @import("env_vars.zig");
-const global_args = @import("global_args.zig");
 
-pub const root_about = "A modern JavaScript and TypeScript runtime";
+/// Render help text for a command (the root or a subcommand).
+pub fn render(w: *Writer, cmd: *const CommandDef) Writer.Error!void {
+    if (cmd.about.len > 0) try w.print("{s}\n\n", .{cmd.about});
 
-/// Render `deno --help`.
-pub fn renderRoot(w: *Writer) Writer.Error!void {
-    try w.print("{s}\n\n", .{root_about});
-    try w.writeAll("Usage: deno [OPTIONS] [COMMAND]\n");
+    if (cmd.tag == null) {
+        try w.print("Usage: {s} [OPTIONS]", .{cmd.name});
+    } else {
+        try w.print("Usage: deno {s} [OPTIONS]", .{cmd.name});
+    }
+    var it = cmd.allArgs();
+    while (it.next()) |pos| {
+        if (!pos.positional) continue;
+        var name_buf: [64]u8 = undefined;
+        const name = std.ascii.upperString(&name_buf, pos.value_name orelse pos.name);
+        switch (pos.num_args) {
+            .optional => try w.print(" [{s}]", .{name}),
+            .zero_or_more => try w.print(" [{s}]...", .{name}),
+            .one_or_more => try w.print(" <{s}>...", .{name}),
+            .exact => |n| if (n != 0) try w.print(" <{s}>", .{name}),
+        }
+    }
+    if (cmd.subcommands.len > 0) try w.writeAll(" [COMMAND]");
+    try w.writeByte('\n');
 
+    if (cmd.subcommands.len > 0) try renderSubcommands(w, cmd.subcommands);
+    try renderOptions(w, cmd);
+
+    // The permission args are hidden from the options table and documented
+    // in this section instead.
+    if (cmd.hasArgGroup(defs.permission_args)) {
+        try w.writeByte('\n');
+        try w.writeAll(defs.permission_help);
+    }
+
+    // Environment variables are only documented in the root help.
+    if (cmd.tag == null) try renderEnvVars(w);
+}
+
+fn isJsonReference(cmd: *const CommandDef) bool {
+    return std.mem.startsWith(u8, cmd.name, "json_reference");
+}
+
+fn renderSubcommands(w: *Writer, subcommands: []const CommandDef) Writer.Error!void {
     try w.writeAll("\nCommands:\n");
     var max_name_len: usize = 0;
-    for (command_table.all) |sub| {
+    for (subcommands) |*sub| {
         if (isJsonReference(sub)) continue;
         max_name_len = @max(max_name_len, sub.name.len);
     }
-    for (command_table.all) |sub| {
+    for (subcommands) |*sub| {
         if (isJsonReference(sub)) continue;
         // Only use the first line of about text in the commands table.
         const short_about = std.mem.sliceTo(sub.about, '\n');
@@ -32,33 +67,17 @@ pub fn renderRoot(w: *Writer) Writer.Error!void {
         try padRight(w, sub.name, max_name_len);
         try w.print("  {s}\n", .{short_about});
     }
-
-    try renderOptions(w, &global_args.all);
-    try renderEnvVars(w);
 }
 
-/// Render `deno <command> --help`.
-///
-/// Only the header and usage line are rendered for now: the per-command
-/// argument tables have not been ported yet.
-pub fn renderCommand(w: *Writer, cmd: Command) Writer.Error!void {
-    if (cmd.about.len > 0) try w.print("{s}\n\n", .{cmd.about});
-    try w.print("Usage: deno {s} [OPTIONS]\n", .{cmd.name});
-    try renderOptions(w, &global_args.all);
-}
-
-fn isJsonReference(cmd: Command) bool {
-    return std.mem.startsWith(u8, cmd.name, "json_reference");
-}
-
-fn renderOptions(w: *Writer, args: []const Arg) Writer.Error!void {
+fn renderOptions(w: *Writer, cmd: *const CommandDef) Writer.Error!void {
     var any = false;
-    for (args) |arg| {
+    var it = cmd.allArgs();
+    while (it.next()) |arg| {
         if (arg.positional or arg.hidden) continue;
         if (!any) try w.writeAll("\nOptions:\n");
         any = true;
 
-        var buf: [128]u8 = undefined;
+        var buf: [256]u8 = undefined;
         var flag: Writer = .fixed(&buf);
         formatFlag(&flag, arg) catch unreachable;
 
@@ -75,7 +94,7 @@ fn renderOptions(w: *Writer, args: []const Arg) Writer.Error!void {
     }
 }
 
-fn formatFlag(w: *Writer, arg: Arg) Writer.Error!void {
+fn formatFlag(w: *Writer, arg: *const Arg) Writer.Error!void {
     if (arg.short) |short| {
         try w.print("-{c}", .{short});
         if (arg.long != null) try w.writeAll(", ");
@@ -131,10 +150,23 @@ fn padRight(w: *Writer, s: []const u8, width: usize) Writer.Error!void {
     if (s.len < width) try w.splatByteAll(' ', width - s.len);
 }
 
-test "root help matches the Rust implementation" {
-    const expected = @embedFile("golden/root_help.txt");
+fn expectHelp(cmd: *const CommandDef, expected: []const u8) !void {
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try renderRoot(&out.writer);
+    try render(&out.writer, cmd);
     try std.testing.expectEqualStrings(expected, out.written());
+}
+
+test "root help matches the Rust implementation" {
+    try expectHelp(&defs.root, @embedFile("golden/root.txt"));
+}
+
+test "subcommand help matches the Rust implementation" {
+    inline for (defs.subcommands) |sub| {
+        if (comptime std.mem.startsWith(u8, sub.name, "json_reference")) continue;
+        expectHelp(&sub, @embedFile("golden/" ++ sub.name ++ ".txt")) catch |err| {
+            std.debug.print("help for `{s}` differs\n", .{sub.name});
+            return err;
+        };
+    }
 }

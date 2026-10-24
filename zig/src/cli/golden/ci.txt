@@ -1,0 +1,12 @@
+Install dependencies from a lockfile in a frozen state
+
+Usage: deno ci [OPTIONS]
+
+Options:
+      --prod              Only install production dependencies (excludes devDependencies)
+      --skip-types        Exclude @types/* packages from installation.
+                          Be careful, as it uses a name-based heuristic and may skip packages that ship runtime code.
+      --env-file[=<VALUE>]  Load environment variables from local file
+                            Only the first environment variable with a given key is used.
+                            Existing process environment variables are not overwritten, so if variables with the same names already exist in the environment, their values will be preserved.
+                            Where multiple declarations for the same environment variable exist in your .env file, the first one encountered is applied. This is determined by the order of the files you pass as arguments.
