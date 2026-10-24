@@ -19,7 +19,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, result: *const ParseResult, err: 
 
     const platform: v8.Platform = .init("");
     defer platform.deinit();
-    const rt = try JsRuntime.create(gpa, io);
+    const rt = try JsRuntime.create(gpa, io, .{});
     defer rt.destroy(gpa);
 
     // `--print` logs the value of the last expression.

@@ -74,6 +74,7 @@ test {
     _ = @import("cli/parse.zig");
     if (build_options.have_v8) {
         _ = @import("core/runtime.zig");
+        _ = @import("core/ops.zig");
         _ = @import("v8/v8.zig");
     }
     _ = help;

@@ -1,36 +1,125 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
-//! The JavaScript runtime: an isolate with one context. This is the start
-//! of the port of `JsRuntime` from `libs/core`; ops, modules and the event
-//! loop come later.
+//! The JavaScript runtime: an isolate with one context, bootstrapped with
+//! `libs/core`'s JavaScript. The start of the port of `JsRuntime` from
+//! `libs/core/runtime/jsruntime.rs`; modules, async ops and the event loop
+//! come later.
 
 const std = @import("std");
 const v8 = @import("../v8/v8.zig");
+const ops = @import("ops.zig");
+const ops_builtin = @import("ops_builtin.zig");
+
+/// Run right after the context is created, to set up what ops need
+/// (`CONTEXT_SETUP_SOURCES`).
+const context_setup_sources = [_][]const u8{ "00_primordials.js", "00_infra.js" };
+/// Run once ops are bound (`BUILTIN_SOURCES`).
+const builtin_sources = [_][]const u8{ "02_timers.js", "01_core.js" };
 
 pub const JsRuntime = struct {
     owned: v8.OwnedIsolate,
     /// Keeps the context handle alive for the runtime's lifetime.
     scope: v8.HandleScope,
     context: *const v8.Context,
+    gpa: std.mem.Allocator,
     io: std.Io,
+    /// The prototype of `import.meta` objects of `ext:` modules.
+    ext_import_meta_proto: v8.Global(v8.Object),
+    /// The bootstrap object captured by `01_core.js`.
+    captured_bootstrap: ?v8.Global(v8.Value) = null,
+
+    pub const CreateError = error{ OutOfMemory, JsException, CoreBootstrapFailed };
+
+    pub const Options = struct {
+        /// Ops to bind in addition to the built-in ones.
+        ops: []const ops.OpDecl = &.{},
+    };
 
     /// Create a runtime. `v8.Platform.init` must have been called. The
     /// runtime must stay at a stable address, so it's heap-allocated.
-    pub fn create(gpa: std.mem.Allocator, io: std.Io) !*JsRuntime {
+    pub fn create(gpa: std.mem.Allocator, io: std.Io, options: Options) CreateError!*JsRuntime {
         const self = try gpa.create(JsRuntime);
-        self.owned = .init();
-        self.io = io;
-        self.scope.init(self.owned.isolate);
-        self.context = v8.newContext(self.owned.isolate);
+        errdefer gpa.destroy(self);
+        self.* = .{
+            .owned = .init(),
+            .scope = undefined,
+            .context = undefined,
+            .gpa = gpa,
+            .io = io,
+            .ext_import_meta_proto = undefined,
+        };
+        const iso = self.owned.isolate;
+        v8.c.v8__Isolate__SetData(iso, ops.runtime_slot, self);
+        self.scope.init(iso);
+        self.context = v8.newContext(iso);
         v8.c.v8__Context__Enter(self.context);
+        self.ext_import_meta_proto = .init(iso, v8.c.v8__Object__New(iso));
+        try self.bootstrapCore(options.ops);
         try self.installTemporaryConsole();
         return self;
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        if (self.captured_bootstrap) |g| g.deinit();
+        self.ext_import_meta_proto.deinit();
         v8.c.v8__Context__Exit(self.context);
         self.scope.deinit();
         self.owned.deinit();
         gpa.destroy(self);
+    }
+
+    /// Set up `Deno.core` and run `libs/core`'s JavaScript, binding the ops
+    /// on `Deno.core.ops` in between. The equivalent of the context setup in
+    /// `JsRuntime::new` and `bindings.rs`.
+    fn bootstrapCore(self: *JsRuntime, extra_ops: []const ops.OpDecl) CreateError!void {
+        const iso = self.isolate();
+        const ctx = self.context;
+        const scope: ops.Scope = .{ .runtime = self, .isolate = iso, .context = ctx, .arena = self.gpa };
+
+        // `Deno.core = { ops, callConsole, console }`.
+        const deno = v8.c.v8__Object__New(iso);
+        const core = v8.c.v8__Object__New(iso);
+        const core_ops = v8.c.v8__Object__New(iso);
+        try v8.setProperty(iso, ctx, core, "ops", @ptrCast(core_ops));
+        try v8.setProperty(iso, ctx, core, "callConsole", @ptrCast(try v8.newFunction(ctx, callConsole)));
+        const extras = v8.c.v8__Context__GetExtrasBindingObject(ctx);
+        try v8.setProperty(iso, ctx, core, "console", try v8.getProperty(iso, ctx, extras, "console"));
+        try v8.setProperty(iso, ctx, deno, "core", @ptrCast(core));
+        try v8.setProperty(iso, ctx, v8.c.v8__Context__Global(ctx), "Deno", @ptrCast(deno));
+
+        inline for (context_setup_sources) |name| try self.runCoreSource(name);
+        try ops.install(scope, core_ops, &ops_builtin.all);
+        try ops.install(scope, core_ops, extra_ops);
+        inline for (builtin_sources) |name| try self.runCoreSource(name);
+    }
+
+    fn runCoreSource(self: *JsRuntime, comptime name: []const u8) CreateError!void {
+        const specifier = "ext:core/" ++ name;
+        var exception: ?[]u8 = null;
+        _ = self.executeScript(self.gpa, specifier, @embedFile(specifier), &exception) catch |err| {
+            if (exception) |e| {
+                std.log.err("failed to run {s}: {s}", .{ specifier, e });
+                self.gpa.free(e);
+                return error.CoreBootstrapFailed;
+            }
+            return err;
+        };
+    }
+
+    /// `Deno.core.callConsole(inspectorConsoleMethod, denoConsoleMethod,
+    /// ...args)`: forwards a console call to both. There is no inspector yet,
+    /// so only the Deno method is called.
+    fn callConsole(info: *const v8.FunctionCallbackInfo) callconv(.c) void {
+        const c = v8.c;
+        const iso = c.v8__FunctionCallbackInfo__GetIsolate(info);
+        const ctx = c.v8__Isolate__GetCurrentContext(iso);
+        const n: usize = @intCast(c.v8__FunctionCallbackInfo__Length(info));
+        if (n < 2) return;
+        const deno_method = c.v8__FunctionCallbackInfo__Get(info, 1);
+        if (!c.v8__Value__IsFunction(deno_method)) return;
+        var args: [32]*const v8.Value = undefined;
+        const argc = @min(n - 2, args.len);
+        for (0..argc) |i| args[i] = c.v8__FunctionCallbackInfo__Get(info, @intCast(i + 2));
+        _ = c.v8__Function__Call(@ptrCast(deno_method), ctx, @ptrCast(c.v8__Undefined(iso)), @intCast(argc), &args);
     }
 
     pub fn isolate(self: *JsRuntime) *v8.Isolate {
@@ -115,7 +204,7 @@ pub const JsRuntime = struct {
 test "run a script" {
     v8.initForTesting();
     const gpa = std.testing.allocator;
-    const rt = try JsRuntime.create(gpa, std.testing.io);
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
     defer rt.destroy(gpa);
 
     var exception: ?[]u8 = null;
@@ -144,4 +233,25 @@ fn typeOf(rt: *JsRuntime, expr: []const u8) ![]const u8 {
     const s = try v8.toUtf8(std.testing.allocator, rt.isolate(), rt.context, v);
     defer std.testing.allocator.free(s);
     return if (std.mem.eql(u8, s, "undefined")) "undefined" else "defined";
+}
+
+test "libs/core's JavaScript is loaded" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    const v = rt.executeScript(gpa, "test.js",
+        \\[typeof Deno.core.print, typeof Deno.core.ops.op_print,
+        \\ typeof globalThis.__bootstrap.primordials.ArrayPrototypeMap,
+        \\ typeof queueMicrotask, Object.isFrozen(globalThis.__bootstrap.core)].join()
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception.?});
+        return err;
+    };
+    const s = try v8.toUtf8(gpa, rt.isolate(), rt.context, v);
+    defer gpa.free(s);
+    try std.testing.expectEqualStrings("function,function,function,function,true", s);
+    try std.testing.expect(rt.captured_bootstrap != null);
 }
