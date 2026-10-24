@@ -2,6 +2,7 @@
 //! Entry point of the Zig port of the Deno CLI (see `zig/PORTING.md`).
 
 const std = @import("std");
+const build_options = @import("build_options");
 const flags = @import("cli/flags.zig");
 const help = @import("cli/help.zig");
 const version = @import("version.zig");
@@ -31,7 +32,13 @@ pub fn main(init: std.process.Init) !u8 {
         .version_short => printStdout(out, version.render, .{false}),
         .version_long => printStdout(out, version.render, .{true}),
         .help => |cmd| printStdout(out, help.render, .{cmd}),
-        .subcommand => |cmd| try notPorted(err, cmd.name),
+        .subcommand => |cmd| switch (cmd.tag.?) {
+            .eval => if (build_options.have_v8)
+                try @import("tools/eval.zig").run(init.gpa, io, &parsed.result, err)
+            else
+                try noV8(err),
+            else => try notPorted(err, cmd.name),
+        },
         .default_run => try notPorted(err, "run"),
         .default_repl => try notPorted(err, "repl"),
     };
@@ -48,6 +55,11 @@ fn printStdout(out: *std.Io.Writer, comptime render: anytype, args: anytype) u8 
     return 0;
 }
 
+fn noV8(err: *std.Io.Writer) !u8 {
+    try err.writeAll("error: this build of the Zig port has no V8 (no prebuilt rusty_v8 archive for this target yet)\n");
+    return 1;
+}
+
 fn notPorted(err: *std.Io.Writer, name: []const u8) !u8 {
     try err.print(
         "error: `deno {s}` has not been ported to Zig yet (see zig/PORTING.md)\n",
@@ -60,6 +72,10 @@ test {
     std.testing.refAllDecls(@This());
     _ = flags;
     _ = @import("cli/parse.zig");
+    if (build_options.have_v8) {
+        _ = @import("core/runtime.zig");
+        _ = @import("v8/v8.zig");
+    }
     _ = help;
     _ = version;
 }
