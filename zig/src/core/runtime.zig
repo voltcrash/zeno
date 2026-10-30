@@ -38,6 +38,10 @@ pub const JsRuntime = struct {
     tick_buffer: ?v8.Global(v8.c.ArrayBuffer) = null,
     tick_info: ?*[2]u8 = null,
     drain_ticks: ?v8.Global(v8.c.Function) = null,
+    immediate_buffer: ?v8.Global(v8.c.ArrayBuffer) = null,
+    immediate_info: ?*[3]i32 = null,
+    immediate_refed: bool = false,
+    run_immediates: ?v8.Global(v8.c.Function) = null,
 
     pub const CreateError = error{ OutOfMemory, JsException, CoreBootstrapFailed };
 
@@ -87,6 +91,8 @@ pub const JsRuntime = struct {
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
         self.exceptions.deinit(gpa);
         if (self.tick_buffer) |b| b.deinit();
+        if (self.immediate_buffer) |b| b.deinit();
+        if (self.run_immediates) |f| f.deinit();
         if (self.drain_ticks) |f| f.deinit();
         if (self.process_timers) |f| f.deinit();
         if (self.dispatched_exception) |e| e.deinit();
@@ -133,6 +139,15 @@ pub const JsRuntime = struct {
         _ = v8.c.v8__Function__Call(@ptrCast(setter), ctx, @ptrCast(v8.c.v8__Undefined(iso)), 1, &.{@ptrCast(view)}) orelse return error.JsException;
         self.drain_ticks = .init(iso, @ptrCast(try v8.getProperty(iso, ctx, core, "__drainNextTickAndMacrotasks")));
         v8.c.v8__Isolate__SetPromiseRejectCallback(iso, @import("exceptions.zig").ExceptionState.promiseRejectCallback);
+
+        const immediate_buffer = v8.c.v8__ArrayBuffer__New__with_byte_length(iso, 3 * @sizeOf(i32));
+        self.immediate_buffer = .init(iso, immediate_buffer);
+        self.immediate_info = @ptrCast(@alignCast(v8.c.v8__ArrayBuffer__Data(immediate_buffer).?));
+        self.immediate_info.?.* = .{ 0, 0, 0 };
+        const immediate_view = v8.c.v8__Int32Array__New(immediate_buffer, 0, 3) orelse return error.OutOfMemory;
+        const immediate_setter = try v8.getProperty(iso, ctx, core, "__setImmediateInfo");
+        _ = v8.c.v8__Function__Call(@ptrCast(immediate_setter), ctx, @ptrCast(v8.c.v8__Undefined(iso)), 1, &.{@ptrCast(immediate_view)}) orelse return error.JsException;
+        self.run_immediates = .init(iso, @ptrCast(try v8.getProperty(iso, ctx, core, "runImmediateCallbacks")));
 
         // `ext:core/ops` exports every op.
         var exports: std.ArrayList(modules.Source.Export) = .empty;
@@ -240,48 +255,115 @@ pub const JsRuntime = struct {
         }
     }
 
-    /// Drive the JS timer queue until no referenced wakeup remains. Async
-    /// I/O, immediates and platform tasks are added separately.
+    /// Drive timers, nextTicks, immediates and V8 tasks. Async ops and I/O
+    /// readiness are integrated as their native implementations are ported.
     pub fn runEventLoop(self: *JsRuntime, main_promise: ?*const v8.c.Promise, thrown: *?*const v8.Value) v8.Error!void {
         const c = v8.c;
         const iso = self.isolate();
+        const platform = v8.Platform.current();
         const drain = if (self.drain_ticks) |f| f.get(iso) else null;
+        const immediates = if (self.run_immediates) |f| f.get(iso) else null;
+        var carried_work = false;
         while (true) {
-            try self.exceptions.dispatchHandled(self);
-            if (drain) |f| {
-                _ = c.v8__Function__Call(f, self.context, @ptrCast(c.v8__Undefined(iso)), 0, &.{}) orelse return error.JsException;
-            } else {
-                c.v8__Isolate__PerformMicrotaskCheckpoint(iso);
+            var did_work = carried_work;
+            carried_work = false;
+            while (platform.pumpMessageLoop(iso, false)) did_work = true;
+            did_work = did_work or (if (self.tick_info) |info| info[0] != 0 else false);
+            try self.drainTicks(drain);
+            try self.checkEventLoopException(main_promise, thrown);
+
+            // Poll expired timers without first sleeping: check-phase work
+            // must not sit behind a future timer deadline.
+            if (self.timers.deadline_ms) |deadline| {
+                if (deadline <= self.timers.now(self.io)) {
+                    try self.dispatchTimers();
+                    did_work = true;
+                    try self.drainTicks(drain);
+                    try self.checkEventLoopException(main_promise, thrown);
+                }
             }
-            if (self.dispatched_exception) |e| {
-                thrown.* = e.get(iso);
-                e.deinit();
-                self.dispatched_exception = null;
-                return error.JsException;
-            }
-            if (main_promise) |promise| {
-                if (c.v8__Promise__State(promise) == .rejected) {
-                    c.v8__Promise__MarkAsHandled(promise);
-                    self.exception_is_promise = true;
-                    thrown.* = c.v8__Promise__Result(promise);
-                    return error.JsException;
+
+            // Like Rust's check phase, unrefed immediates participate only
+            // when actual work drove this iteration. A future refed timer
+            // alone is not a reason to dispatch an unrefed immediate.
+            if (self.immediate_info) |info| {
+                if ((info[0] > 0 or info[2] != 0) and (self.immediate_refed or did_work)) {
+                    try self.callCoreCallback(immediates.?);
+                    try self.drainTicks(drain);
+                    try self.checkEventLoopException(main_promise, thrown);
                 }
             }
             if (self.exceptions.pending.items.len != 0 or self.exceptions.handled.items.len != 0) continue;
+            if (self.immediate_refed) continue;
+
+            const background = c.v8__Isolate__HasPendingBackgroundTasks(iso);
+            if (background) {
+                if (self.timers.refed and self.timers.deadline_ms != null) {
+                    // The default platform has no timed PumpMessageLoop.
+                    // Bound the wait so both timer and foreground deadlines
+                    // make progress. A custom task runner will replace this
+                    // bridge when async I/O adds a unified wakeup source.
+                    const delay_ms = @max(0, @min(1, self.timers.deadline_ms.? - self.timers.now(self.io)));
+                    std.Io.sleep(self.io, .{ .nanoseconds = @intFromFloat(delay_ms * std.time.ns_per_ms) }, .awake) catch {};
+                } else {
+                    carried_work = platform.pumpMessageLoop(iso, true);
+                }
+                continue;
+            }
             if (!self.timers.refed or self.timers.deadline_ms == null) return;
             self.timers.wait(self.io);
-            // Keep handles created by each iteration bounded, including when
-            // a repeating timer keeps the process alive indefinitely.
-            var scope: v8.HandleScope = undefined;
-            scope.init(iso);
-            defer scope.deinit();
-            const now = c.v8__Number__New(iso, self.timers.now(self.io));
-            const result = c.v8__Function__Call(self.process_timers.?.get(iso), self.context, @ptrCast(c.v8__Undefined(iso)), 1, &.{@ptrCast(now)}) orelse return error.JsException;
-            var expiry: c.Maybe(f64) = undefined;
-            c.v8__Value__NumberValue(result, self.context, &expiry);
-            if (!expiry.has_value) return error.JsException;
-            self.timers.setExpiry(self.io, expiry.value);
         }
+    }
+
+    fn drainTicks(self: *JsRuntime, callback: ?*const v8.c.Function) v8.Error!void {
+        try self.exceptions.dispatchHandled(self);
+        if (callback) |f| {
+            try self.callCoreCallback(f);
+        } else {
+            v8.c.v8__Isolate__PerformMicrotaskCheckpoint(self.isolate());
+        }
+    }
+
+    fn checkEventLoopException(self: *JsRuntime, main_promise: ?*const v8.c.Promise, thrown: *?*const v8.Value) v8.Error!void {
+        const c = v8.c;
+        const iso = self.isolate();
+        if (self.dispatched_exception) |e| {
+            thrown.* = e.get(iso);
+            e.deinit();
+            self.dispatched_exception = null;
+            return error.JsException;
+        }
+        if (main_promise) |promise| {
+            if (c.v8__Promise__State(promise) == .rejected) {
+                c.v8__Promise__MarkAsHandled(promise);
+                self.exception_is_promise = true;
+                thrown.* = c.v8__Promise__Result(promise);
+                return error.JsException;
+            }
+        }
+    }
+
+    fn callCoreCallback(self: *JsRuntime, callback: *const v8.c.Function) v8.Error!void {
+        // Bound local handles created by each iteration of a long-running
+        // runtime. A caught exception remains rooted by the caller's TryCatch.
+        var scope: v8.HandleScope = undefined;
+        scope.init(self.isolate());
+        defer scope.deinit();
+        _ = v8.c.v8__Function__Call(callback, self.context, @ptrCast(v8.c.v8__Undefined(self.isolate())), 0, &.{}) orelse return error.JsException;
+    }
+
+    fn dispatchTimers(self: *JsRuntime) v8.Error!void {
+        const c = v8.c;
+        const iso = self.isolate();
+        var scope: v8.HandleScope = undefined;
+        scope.init(iso);
+        defer scope.deinit();
+        const now = c.v8__Number__New(iso, self.timers.now(self.io));
+        const result = c.v8__Function__Call(self.process_timers.?.get(iso), self.context, @ptrCast(c.v8__Undefined(iso)), 1, &.{@ptrCast(now)}) orelse return error.JsException;
+        var expiry: c.Maybe(f64) = undefined;
+        c.v8__Value__NumberValue(result, self.context, &expiry);
+        if (!expiry.has_value) return error.JsException;
+        self.timers.setExpiry(self.io, expiry.value);
     }
 
     /// An exception's stack trace if it has one, else `String(exception)`.
@@ -763,4 +845,123 @@ test "main module rejection is observed once without a user rejection event" {
         \\throw new Error('main rejection');
     , &exception));
     try std.testing.expect(std.mem.startsWith(u8, exception.?, "Error: main rejection"));
+}
+
+test "immediates drain in batches with ticks and promises between callbacks" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///immediates.js",
+        \\const c = Deno.core;
+        \\globalThis.order = [];
+        \\const immediate = (fn, args) => {
+        \\  const item = { _onImmediate: fn, _argv: args, _destroyed: false,
+        \\    _idlePrev: null, _idleNext: null, [c.kRefed]: true };
+        \\  c.immediateRefCount(true);
+        \\  c.queueImmediate(item);
+        \\  return item;
+        \\};
+        \\const cancelled = immediate(() => { throw new Error('cancelled immediate fired'); });
+        \\c.clearImmediate(cancelled); c.clearImmediate(cancelled);
+        \\immediate(() => {
+        \\  order.push('first');
+        \\  c.queueNextTick({callback() { order.push('tick'); }});
+        \\  Promise.resolve().then(() => order.push('promise'));
+        \\  immediate(() => order.push('nested'));
+        \\});
+        \\immediate((arg) => order.push(arg), ['second']);
+        \\await new Promise(resolve => immediate(resolve));
+        \\order.push('await');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    const result = try rt.executeScript(gpa, "test.js", "order.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("first,tick,promise,second,await,nested", text);
+    try std.testing.expectEqual([3]i32{ 0, 0, 0 }, rt.immediate_info.?.*);
+    try std.testing.expect(!rt.immediate_refed);
+}
+
+test "unrefed immediates require actual work, not a future timer" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///unref-immediate.js",
+        \\const c = Deno.core;
+        \\globalThis.order = [];
+        \\const item = { _onImmediate() { order.push('unref'); }, _destroyed: false,
+        \\  _idlePrev: null, _idleNext: null, [c.kRefed]: false };
+        \\c.queueImmediate(item);
+    , &exception);
+    // The unrefed item alone did not drive a check phase.
+    try std.testing.expectEqual(@as(i32, 1), rt.immediate_info.?[0]);
+    try rt.executeMainModule(gpa, "file:///ref-timer.js",
+        \\Deno.core.createTimer(() => order.push('timer'), 5, undefined, false, true, false);
+    , &exception);
+    const result = try rt.executeScript(gpa, "test.js", "order.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("timer,unref", text);
+}
+
+test "immediates run before waiting for future timers and errors propagate" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///immediate-error.js",
+        \\const c = Deno.core;
+        \\c.createTimer(() => {}, 100000, undefined, false, true, false);
+        \\c.immediateRefCount(true);
+        \\c.queueImmediate({ _onImmediate() { throw new Error('immediate boom'); },
+        \\  _destroyed: false, _idlePrev: null, _idleNext: null, [c.kRefed]: true });
+    , &exception));
+    try std.testing.expect(std.mem.startsWith(u8, exception.?, "Error: immediate boom"));
+}
+
+test "V8 background compilation settles awaited WebAssembly promises" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///wasm.js",
+        \\// A wasm function exporting answer() -> i32, compiled by V8.
+        \\globalThis.wasmBytes = new Uint8Array([
+        \\  0,97,115,109,1,0,0,0, 1,5,1,96,0,1,127, 3,2,1,0,
+        \\  7,10,1,6,97,110,115,119,101,114,0,0, 10,6,1,4,0,65,42,11
+        \\]);
+        \\const bytes = wasmBytes;
+        \\const modules = await Promise.all(Array.from({length: 8}, () => WebAssembly.compile(bytes)));
+        \\if (!modules.every(m => m instanceof WebAssembly.Module)) throw new Error('compile');
+        \\const instance = await WebAssembly.instantiate(modules[0]);
+        \\if (instance.exports.answer() !== 42) throw new Error('wasm result');
+        \\// Exercise V8 completion while a referenced JS timer is active.
+        \\const timer = Deno.core.createTimer(() => { throw new Error('completion blocked behind timer'); }, 100000, undefined, false, true, false);
+        \\await WebAssembly.compile(bytes);
+        \\Deno.core.cancelTimer(timer);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try rt.executeMainModule(gpa, "file:///wasm-detached.js",
+        \\WebAssembly.compile(wasmBytes).then(() => { globalThis.detachedWasmDone = true; });
+    , &exception);
+    const done = try rt.executeScript(gpa, "test.js", "globalThis.detachedWasmDone === true", &exception);
+    try std.testing.expect(v8.c.v8__Value__BooleanValue(done, rt.isolate()));
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///wasm-error.js",
+        \\await WebAssembly.compile(new Uint8Array([1, 2, 3]));
+    , &exception));
+    try std.testing.expect(std.mem.startsWith(u8, exception.?, "CompileError:"));
 }

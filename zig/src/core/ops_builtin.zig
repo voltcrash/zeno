@@ -18,6 +18,7 @@ pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_timer_track", opTimerTrack),
     op("op_timer_untrack", opTimerUntrack),
     op("op_run_microtasks", opRunMicrotasks),
+    op("op_immediate_check", opImmediateCheck),
     op("op_dispatch_exception", opDispatchException),
     op("op_drain_pending_rejections", opDrainPendingRejections),
     op("op_set_handled_promise_rejection_handler", opSetHandledPromiseRejectionHandler),
@@ -94,4 +95,8 @@ fn opSetHandledPromiseRejectionHandler(scope: Scope, value: *const v8.Value) !vo
     const state = &scope.runtime.exceptions;
     if (state.handled_handler) |old| old.deinit();
     state.handled_handler = if (c.v8__Value__IsFunction(value)) .init(scope.isolate, @ptrCast(value)) else null;
+}
+
+fn opImmediateCheck(scope: Scope, make_ref: bool) void {
+    scope.runtime.immediate_refed = make_ref;
 }

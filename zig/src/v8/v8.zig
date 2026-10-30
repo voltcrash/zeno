@@ -44,19 +44,29 @@ pub fn version() []const u8 {
 pub const Platform = struct {
     raw: *c.Platform,
 
+    var active: ?Platform = null;
+
     pub fn init(extra_flags: []const u8) Platform {
         c.v8__V8__SetFlagsFromString(default_flags, default_flags.len);
         if (extra_flags.len > 0) c.v8__V8__SetFlagsFromString(extra_flags.ptr, extra_flags.len);
         const raw = c.v8__Platform__NewDefaultPlatform(0, false);
         c.v8__V8__InitializePlatform(raw);
         c.v8__V8__Initialize();
-        return .{ .raw = raw };
+        const platform: Platform = .{ .raw = raw };
+        active = platform;
+        return platform;
     }
 
     pub fn deinit(self: Platform) void {
         _ = c.v8__V8__Dispose();
         c.v8__V8__DisposePlatform();
         c.v8__Platform__DELETE(self.raw);
+        active = null;
+    }
+
+    /// V8 has one process-wide platform, initialized before all isolates.
+    pub fn current() Platform {
+        return active.?;
     }
 
     /// Run pending platform tasks for `isolate`. Returns whether any ran.
