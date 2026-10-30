@@ -4,6 +4,26 @@ const std = @import("std");
 const R = @import("resources.zig");
 const AdaptiveBufferStrategy = @import("buffer_strategy.zig").AdaptiveBufferStrategy;
 
+/// Pass each source-owned chunk straight to the sink. Close/abort behavior
+/// for source and destination belongs to the JS caller, as in Rust's op_pipe.
+pub fn pipe(gpa: std.mem.Allocator, io: std.Io, source: R.Resource, sink: R.Resource, canceled: ?*const std.atomic.Value(bool)) !void {
+    const hint = source.sizeHint();
+    var strategy: AdaptiveBufferStrategy = .init(hint.min, hint.max);
+    while (true) {
+        if (isCanceled(canceled)) return error.OperationCanceled;
+        var chunk = source.readChunk(io, gpa, strategy.bufferSize()) catch |err| return if (isCanceled(canceled)) error.OperationCanceled else err;
+        defer chunk.deinit();
+        if (chunk.len() == 0) return;
+        strategy.notifyRead(chunk.len());
+        if (isCanceled(canceled)) return error.OperationCanceled;
+        sink.writeAll(io, chunk.bytes()) catch |err| return if (isCanceled(canceled)) error.OperationCanceled else err;
+    }
+}
+
+fn isCanceled(flag: ?*const std.atomic.Value(bool)) bool {
+    return if (flag) |state| state.load(.acquire) else false;
+}
+
 /// Borrow resource for the whole read. The caller owns the returned allocation.
 /// Hints only choose allocation sizes; they never limit the bytes read.
 pub fn readAll(gpa: std.mem.Allocator, io: std.Io, resource: R.Resource) ![]u8 {
@@ -78,4 +98,78 @@ test "read-all releases partial output on allocation and native failures" {
     const resource = try R.Resource.create(std.testing.allocator, TestReader, .{ .data = "partial", .limit = 3, .fail_at = 3 });
     defer resource.deinit();
     try std.testing.expectError(error.ReadFailure, readAll(std.testing.allocator, std.testing.io, resource));
+}
+
+const PipeSink = struct {
+    gpa: std.mem.Allocator,
+    output: std.ArrayList(u8) = .empty,
+    expected_address: ?usize = null,
+    fail_at: ?usize = null,
+    pub fn write(self: *@This(), _: std.Io, bytes: []const u8) !usize {
+        if (self.fail_at) |at| if (self.output.items.len >= at) return error.WriteFailure;
+        if (self.expected_address) |address| {
+            if (@intFromPtr(bytes.ptr) != address + self.output.items.len) return error.CopiedChunk;
+        }
+        const n = @min(bytes.len, 2);
+        try self.output.appendSlice(self.gpa, bytes[0..n]);
+        return n;
+    }
+    pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+        self.output.deinit(self.gpa);
+    }
+};
+
+test "pipe passes source-owned chunks directly through partial sink writes" {
+    const ChunkSource = struct {
+        pending: R.ByteView,
+        pub fn readChunk(self: *@This(), _: std.Io, _: std.mem.Allocator, limit: usize) !R.ByteView {
+            return self.pending.splitTo(@min(limit, self.pending.len(), 3));
+        }
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.pending.deinit();
+        }
+    };
+    const gpa = std.testing.allocator;
+    const source = owned: {
+        var view = try R.ByteView.copy(gpa, "source-owned pipe chunks");
+        errdefer view.deinit();
+        break :owned try R.Resource.create(gpa, ChunkSource, .{ .pending = view });
+    };
+    defer source.deinit();
+    const source_ref = try source.downcast(ChunkSource);
+    defer source_ref.deinit();
+    const sink = try R.Resource.create(gpa, PipeSink, .{ .gpa = gpa, .expected_address = @intFromPtr(source_ref.ptr().pending.bytes().ptr) });
+    defer sink.deinit();
+    try pipe(gpa, std.testing.io, source, sink, null);
+    const sink_ref = try sink.downcast(PipeSink);
+    defer sink_ref.deinit();
+    try std.testing.expectEqualStrings("source-owned pipe chunks", sink_ref.ptr().output.items);
+}
+
+fn pipeAllocationFailureExercise(gpa: std.mem.Allocator) !void {
+    const source = try R.Resource.create(gpa, TestReader, .{ .data = "native pipe", .limit = 3 });
+    defer source.deinit();
+    const sink = try R.Resource.create(gpa, PipeSink, .{ .gpa = gpa });
+    defer sink.deinit();
+    try pipe(gpa, std.testing.io, source, sink, null);
+    const held = try sink.downcast(PipeSink);
+    defer held.deinit();
+    try std.testing.expectEqualStrings("native pipe", held.ptr().output.items);
+}
+
+test "pipe cleans up chunk allocations on allocation, read, write and cancellation errors" {
+    const gpa = std.testing.allocator;
+    try std.testing.checkAllAllocationFailures(gpa, pipeAllocationFailureExercise, .{});
+    const source = try R.Resource.create(gpa, TestReader, .{ .data = "partial", .limit = 3, .fail_at = 3 });
+    defer source.deinit();
+    const sink = try R.Resource.create(gpa, PipeSink, .{ .gpa = gpa });
+    defer sink.deinit();
+    try std.testing.expectError(error.ReadFailure, pipe(gpa, std.testing.io, source, sink, null));
+    const other_source = try R.Resource.create(gpa, TestReader, .{ .data = "write failure" });
+    defer other_source.deinit();
+    const other_sink = try R.Resource.create(gpa, PipeSink, .{ .gpa = gpa, .fail_at = 2 });
+    defer other_sink.deinit();
+    try std.testing.expectError(error.WriteFailure, pipe(gpa, std.testing.io, other_source, other_sink, null));
+    const canceled: std.atomic.Value(bool) = .init(true);
+    try std.testing.expectError(error.OperationCanceled, pipe(gpa, std.testing.io, source, sink, &canceled));
 }

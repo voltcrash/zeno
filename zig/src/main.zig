@@ -82,6 +82,7 @@ test {
     _ = flags;
     _ = @import("core/resources.zig");
     _ = @import("core/byte_view.zig");
+    _ = @import("core/async_cancel.zig");
     _ = @import("core/resource_io.zig");
     _ = @import("core/buffer_strategy.zig");
     _ = @import("cli/parse.zig");

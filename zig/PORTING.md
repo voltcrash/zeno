@@ -66,10 +66,12 @@ have no V8 for now.
 | `src/v8/`                      | the `v8` crate (rusty_v8)                       |
 | `src/core/runtime.zig`         | `libs/core/runtime/jsruntime.rs`                |
 | `src/core/resources.zig`       | `libs/core/io/{resource,resource_table}.rs`     |
-| `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all             |
+| `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all/pipe        |
 | `src/core/buffer_strategy.zig` | `libs/core/io/buffer_strategy.rs`               |
 | `src/core/byte_view.zig`       | `libs/core/io/buffers.rs` owned views           |
 | `src/core/async_ops.zig`       | `libs/core/runtime/op_driver`                   |
+| `src/core/async_cancel.zig`    | `libs/core/async_cancel.rs` cancel handle       |
+| `src/core/pipe_cancel.zig`     | `libs/core/ops_builtin.rs` pipe cancellation    |
 | `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
 | `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)               |
 | `src/core/url.zig`             | `resolve_import` (interim URL handling)         |
@@ -149,8 +151,8 @@ have no V8 for now.
   Partial writes are retried by the default write-all implementation; a
   zero-progress write fails instead of spinning. Unsupported methods use
   deno_error's `NotSupported` class/message through the registered core error
-  builder. Runtime stdio registration, resource piping and complete native I/O
-  error mapping still follow.
+  builder. Runtime stdio registration and complete native I/O error mapping
+  still follow.
 
 - **Native chunk reads:** resources can supply source-owned byte chunks,
   override BYOB reads, or provide both. Core reads copy a chunk into the
@@ -159,8 +161,18 @@ have no V8 for now.
   byte views share allocation ownership across clones and split ranges, with
   independent cursors and bounds. Clones are read-only; filling a new chunk
   requires unique ownership. Atomic ownership permits transfer between workers
-  without a V8 dependency. This supplies the buffer contract needed by the
-  native resource-pipe pump, which still follows with cancellation support.
+  without a V8 dependency.
+
+- **Native resource pipes:** `op_pipe` pumps source-owned chunks directly into
+  the sink with adaptive read sizes and retries partial writes. The JS caller
+  owns source/sink close, abort and shutdown behavior. An optional cancel-handle
+  resource interrupts blocked native reads and writes; cancellation is reported
+  as core's registered `Interrupted` error. A handle can cancel multiple pipes.
+  Its RID is consumed on success and error before error builders or promise
+  callbacks run, matching Rust (including a RID naming another resource type).
+  Native async argument hooks register cancellation on the runtime thread and
+  remove registrations after joining workers. Runtime teardown joins every pipe
+  before releasing resources or shared cancellation registrations.
 
 - **Read-all and owned byte results:** `Deno.core.readAll` uses Rust's adaptive
   buffer strategy, including size hints, short reads, saturating arithmetic and
@@ -190,5 +202,5 @@ have no V8 for now.
   the runtime thread. Shared allocator ownership lets retained stores survive
   isolate disposal and be rewrapped in another isolate.
 
-Next in phase 3: resource piping/cancellation, remaining resource I/O ops and
-unified I/O/platform wakeups, then remaining built-in ops.
+Next in phase 3: remaining resource I/O ops and unified I/O/platform wakeups,
+then remaining built-in ops.
