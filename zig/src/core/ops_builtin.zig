@@ -25,6 +25,12 @@ pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_close", opClose),
     op("op_try_close", opTryClose),
     op("op_cancel_read", opCancelRead),
+    async_ops.decl("op_read", opRead, .{}),
+    async_ops.decl("op_write", opWrite, .{}),
+    async_ops.decl("op_write_all", opWriteAll, .{}),
+    async_ops.decl("op_shutdown", opShutdown, .{}),
+    op("op_read_sync", opReadSync),
+    op("op_write_sync", opWriteSync),
     op("op_timer_now", opTimerNow),
     op("op_timer_schedule", opTimerSchedule),
     op("op_timer_track", opTimerTrack),
@@ -162,6 +168,28 @@ fn opCancelRead(scope: Scope, rid: u32) void {
 fn opAddAsync(a: i32, b: i32) i32 {
     // Match Rust release arithmetic without Zig fast-mode overflow UB.
     return a +% b;
+}
+
+const Resource = @import("resources.zig").Resource;
+const JsBuffer = @import("buffers.zig").JsBuffer;
+
+fn opRead(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u32 {
+    return @intCast(try resource.read(scope.io, try buffer.bytes()));
+}
+fn opWrite(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u32 {
+    return @intCast(try resource.write(scope.io, try buffer.bytes()));
+}
+fn opWriteAll(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !void {
+    try resource.writeAll(scope.io, try buffer.bytes());
+}
+fn opShutdown(scope: async_ops.AsyncScope, resource: Resource) !void {
+    try resource.shutdown(scope.io);
+}
+fn opReadSync(scope: Scope, resource: Resource, buffer: JsBuffer) !u32 {
+    return @intCast(try resource.readSync(scope.runtime.io, try buffer.bytes()));
+}
+fn opWriteSync(scope: Scope, resource: Resource, buffer: JsBuffer) !u32 {
+    return @intCast(try resource.writeSync(scope.runtime.io, try buffer.bytes()));
 }
 fn opVoidAsync() void {}
 fn opErrorAsync() error{@"error"}!void {

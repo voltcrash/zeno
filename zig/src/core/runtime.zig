@@ -1463,6 +1463,164 @@ test "buffer argument owners are released on conversion and async errors" {
     , &exception);
 }
 
+const ResourceIoTest = struct {
+    file: std.Io.File,
+    io: std.Io,
+    drops: *usize,
+    mutex: std.Io.Mutex = .init,
+    read_offset: u64 = 0,
+    write_offset: u64 = 0,
+    write_shutdown: bool = false,
+
+    pub fn read(self: *@This(), io: std.Io, data: []u8) !usize {
+        AsyncGateTest.entered.set(io);
+        try AsyncGateTest.gate.wait(io);
+        return self.readSync(io, data);
+    }
+    pub fn readSync(self: *@This(), io: std.Io, data: []u8) !usize {
+        try self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+        const n = try self.file.readPositional(io, &.{data}, self.read_offset);
+        self.read_offset += n;
+        return n;
+    }
+    pub fn write(self: *@This(), io: std.Io, data: []const u8) !usize {
+        return self.writeSync(io, data);
+    }
+    pub fn writeSync(self: *@This(), io: std.Io, data: []const u8) !usize {
+        try self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+        if (self.write_shutdown) return error.WriteAfterShutdown;
+        const n = try self.file.writePositional(io, &.{data[0..@min(data.len, 3)]}, self.write_offset);
+        self.write_offset += n;
+        return n;
+    }
+    pub fn shutdown(self: *@This(), io: std.Io) !void {
+        try self.mutex.lock(io);
+        defer self.mutex.unlock(io);
+        self.write_shutdown = true;
+    }
+    pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+        self.file.close(self.io);
+        self.drops.* += 1;
+    }
+};
+
+test "core resource I/O handles files, partial writes, EOF and retained pending reads" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var drops: usize = 0;
+    AsyncGateTest.gate.reset();
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &.{
+        ops.op("op_test_release", AsyncGateTest.release),
+        ops.op("op_buffer_echo", BufferBindingTest.echo),
+        ops.op("op_detach_buffer", BufferBindingTest.detach),
+    } });
+    defer rt.destroy(gpa);
+    const file = try tmp.dir.createFile(io, "core-io", .{ .read = true });
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = file, .io = io, .drops = &drops }));
+    const eof_file = try tmp.dir.openFile(io, "core-io", .{});
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = eof_file, .io = io, .drops = &drops, .read_offset = 9 }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///core-resource-io.js",
+        \\import { op_read, op_write_sync } from 'ext:core/ops';
+        \\const c = Deno.core;
+        \\const written = await c.write(0, new Uint8Array([99,1,2,3,99]).subarray(1,4));
+        \\if (written !== 3) throw new Error('async write');
+        \\if (await c.writeAll(0, new Uint8Array([4,5,6,7])) !== null) throw new Error('writeAll');
+        \\if (op_write_sync(0, new Uint8Array([8,9])) !== 2) throw new Error('sync write');
+        \\await c.shutdown(0);
+        \\try { await c.write(0, new Uint8Array([10])); throw new Error('shutdown ignored'); }
+        \\catch (e) { if (e.message !== 'WriteAfterShutdown') throw e; }
+        \\const first = new Uint8Array(2);
+        \\if (c.readSync(0, first) !== 2 || first.join() !== '1,2') throw new Error('sync read');
+        \\const storage = new ArrayBuffer(12), view = new Uint8Array(storage,2,8);
+        \\const retained = c.ops.op_buffer_echo(view);
+        \\const pending = op_read(0, view);
+        \\c.close(0);
+        \\c.ops.op_detach_buffer(storage);
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\if (await pending !== 7 || retained.join() !== '3,4,5,6,7,8,9,0') throw new Error('pending read');
+        \\if (c.readSync(1, retained) !== 0 || await c.read(1, retained) !== 0) throw new Error('EOF');
+        \\if (await c.read(1, new Uint8Array(0)) !== 0) throw new Error('empty read');
+        \\c.close(1);
+        \\try { await c.read(0, retained); throw new Error('closed RID accepted'); }
+        \\catch (e) { if (!(e instanceof c.BadResource)) throw e; }
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 2), drops);
+    // The persisted bytes verify write-all retried every partial native write.
+    const output = try tmp.dir.readFileAlloc(io, "core-io", gpa, .unlimited);
+    defer gpa.free(output);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, output);
+}
+
+test "resource I/O uses registered errors and validates erased arguments" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    _ = try rt.resources.add(try R.Resource.create(gpa, struct {}, .{}));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///core-io-errors.js",
+        \\const c = Deno.core, b = new Uint8Array(2);
+        \\class Unsupported extends Error {}
+        \\c.registerErrorClass('NotSupported', Unsupported);
+        \\for (const operation of [() => c.readSync(0,b), () => c.writeSync(0,b),
+        \\  () => c.read(0,b), () => c.write(0,b), () => c.writeAll(0,b), () => c.shutdown(0)]) {
+        \\  let caught = false;
+        \\  try { await operation(); } catch (e) {
+        \\    caught = e instanceof Unsupported && e.message === 'The operation is not supported';
+        \\  }
+        \\  if (!caught) throw new Error('unsupported I/O did not use registered class');
+        \\}
+        \\for (const operation of [() => c.readSync(99,b), () => c.writeSync(99,b),
+        \\  () => c.read(99,b), () => c.write(99,b), () => c.writeAll(99,b), () => c.shutdown(99)]) {
+        \\  let caught = false;
+        \\  try { await operation(); } catch (e) { caught = e instanceof c.BadResource; }
+        \\  if (!caught) throw new Error('bad RID');
+        \\}
+        \\try { await c.read(0,new Uint16Array(2)); throw new Error('wrong buffer accepted'); }
+        \\catch (e) { if (!(e instanceof TypeError)) throw e; }
+        \\await c.writeAll(0,new Uint8Array(0));
+    , &exception);
+}
+
+test "destroying a runtime cancels blocked resource I/O before final release" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{});
+    errdefer rt.destroy(gpa);
+    const file = try tmp.dir.createFile(io, "blocked", .{ .read = true });
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = file, .io = io, .drops = &drops }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    _ = try rt.executeScript(gpa, "blocked-resource.js",
+        \\Deno.core.read(0, new Uint8Array(8));
+        \\Deno.core.close(0);
+    , &exception);
+    try AsyncGateTest.entered.wait(io);
+    try std.testing.expectEqual(@as(usize, 0), drops);
+    rt.destroy(gpa);
+    try std.testing.expectEqual(@as(usize, 1), drops);
+}
+
 test "async I/O retains resource and detached buffer until completion" {
     v8.initForTesting();
     const a = @import("async_ops.zig");

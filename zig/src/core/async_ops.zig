@@ -137,7 +137,7 @@ pub const Driver = struct {
             defer scope.deinit();
             const mapped = if (job.start_error) |err| Mapped{
                 .is_ok = false,
-                .value = c.v8__Exception__Error(try v8.newString(rt.isolate(), @errorName(err))),
+                .value = try ops.errorValue(.{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = rt.gpa }, err),
             } else try job.map(job, rt);
             const args = [_]*const v8.Value{
                 @ptrCast(c.v8__Integer__New(rt.isolate(), job.promise_id)),
@@ -207,7 +207,7 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator() };
             const value = if (@typeInfo(Ret) == .error_union) d.result catch |err| return .{
                 .is_ok = false,
-                .value = c.v8__Exception__Error(try v8.newString(rt.isolate(), @errorName(err))),
+                .value = try ops.errorValue(scope, err),
             } else d.result;
             // Rust's unit mapping is null, leaving undefined as the pending sentinel.
             return .{ .is_ok = true, .value = if (@TypeOf(value) == void) @ptrCast(c.v8__Null(rt.isolate())) else (try ops.toV8(scope, value)).? };

@@ -54,25 +54,25 @@ have no V8 for now.
 
 ## Layout
 
-| Zig                    | Ported from                                   |
-| ---------------------- | --------------------------------------------- |
-| `src/main.zig`         | `cli/main.rs`, `cli/lib.rs`                   |
-| `src/version.zig`      | `cli/lib/version.rs`                          |
-| `src/cli/types.zig`    | `libs/cli_parser/src/types.rs`                |
-| `src/cli/defs.zig`     | `libs/cli_parser/src/defs.rs` (generated)     |
-| `src/cli/env_vars.zig` | `libs/cli_parser/src/env_vars.rs` (generated) |
-| `src/cli/flags.zig`    | `libs/cli_parser/src/{parse,convert}.rs`      |
-| `src/cli/help.zig`     | `libs/cli_parser/src/help.rs`                 |
-| `src/v8/`              | the `v8` crate (rusty_v8)                     |
-| `src/core/runtime.zig` | `libs/core/runtime/jsruntime.rs`              |
-| `src/core/resources.zig` | `libs/core/io/resource_table.rs`             |
-| `src/core/async_ops.zig` | `libs/core/runtime/op_driver`                |
-| `src/core/buffers.zig` | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
-| `src/core/modules.zig` | `libs/core/modules` (`ModuleMap`)             |
-| `src/core/url.zig`     | `resolve_import` (interim URL handling)       |
-| `src/tools/run.zig`    | `cli/tools/run/mod.rs` (`run_script`)         |
-| `src/tools/eval.zig`   | `cli/tools/run/mod.rs` (`eval_command`)       |
-| `src/cli/golden/`      | help output of the Rust parser (generated)    |
+| Zig                      | Ported from                                     |
+| ------------------------ | ----------------------------------------------- |
+| `src/main.zig`           | `cli/main.rs`, `cli/lib.rs`                     |
+| `src/version.zig`        | `cli/lib/version.rs`                            |
+| `src/cli/types.zig`      | `libs/cli_parser/src/types.rs`                  |
+| `src/cli/defs.zig`       | `libs/cli_parser/src/defs.rs` (generated)       |
+| `src/cli/env_vars.zig`   | `libs/cli_parser/src/env_vars.rs` (generated)   |
+| `src/cli/flags.zig`      | `libs/cli_parser/src/{parse,convert}.rs`        |
+| `src/cli/help.zig`       | `libs/cli_parser/src/help.rs`                   |
+| `src/v8/`                | the `v8` crate (rusty_v8)                       |
+| `src/core/runtime.zig`   | `libs/core/runtime/jsruntime.rs`                |
+| `src/core/resources.zig` | `libs/core/io/{resource,resource_table}.rs`     |
+| `src/core/async_ops.zig` | `libs/core/runtime/op_driver`                   |
+| `src/core/buffers.zig`   | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
+| `src/core/modules.zig`   | `libs/core/modules` (`ModuleMap`)               |
+| `src/core/url.zig`       | `resolve_import` (interim URL handling)         |
+| `src/tools/run.zig`      | `cli/tools/run/mod.rs` (`run_script`)           |
+| `src/tools/eval.zig`     | `cli/tools/run/mod.rs` (`eval_command`)         |
+| `src/cli/golden/`        | help output of the Rust parser (generated)      |
 
 ## Roadmap
 
@@ -118,49 +118,55 @@ have no V8 for now.
 - **Core timers:** `Deno.core.createTimer`, cancellation, repeats and ref/unref
   run through the unmodified `02_timers.js` queue with a native monotonic
   wakeup. Module evaluation drives timers and explicit microtask checkpoints;
-  top-level await can settle via a timer. Callback errors reach the CLI.
-  Public `setTimeout`/`setInterval` await the web extension. Async I/O
-  is not wired yet.
+  top-level await can settle via a timer. Callback errors reach the CLI. Public
+  `setTimeout`/`setInterval` await the web extension.
 - **Ticks and rejections:** core nextTicks drain before promise continuations
   and between timer callbacks. V8 rejection notifications are tracked until
-  handlers are attached or core reports them; handlers see the rejection's
-  async context, and late-handler notifications are delivered. Main-module
-  promises are observed by the embedder without duplicate rejection events.
-  The CLI distinguishes fatal promise rejections with `(in promise)`.
+  handlers are attached or core reports them; handlers see the rejection's async
+  context, and late-handler notifications are delivered. Main-module promises
+  are observed by the embedder without duplicate rejection events. The CLI
+  distinguishes fatal promise rejections with `(in promise)`.
 
-- **Immediates and V8 tasks:** core immediates run in check-phase batches,
-  with nextTicks/microtasks between callbacks. Unreferenced immediates alone
-  allow exit and only run on iterations driven by actual work. The runtime
-  pumps V8's default platform, including background WebAssembly compilation
-  and its foreground completions. When background work and referenced timers
-  coexist, a bounded 1 ms wait bridges the default platform's lack of a timed
-  pump; a custom task runner and unified I/O wakeup remain to be ported.
+- **Immediates and V8 tasks:** core immediates run in check-phase batches, with
+  nextTicks/microtasks between callbacks. Unreferenced immediates alone allow
+  exit and only run on iterations driven by actual work. The runtime pumps V8's
+  default platform, including background WebAssembly compilation and its
+  foreground completions. When background work and referenced timers coexist, a
+  bounded 1 ms wait bridges the default platform's lack of a timed pump; a
+  custom task runner and unified I/O wakeup remain to be ported.
 
 - **Resource table:** typed and erased retained handles, monotonically
-  increasing resource IDs, take/replace, explicit close and cancellation
-  hooks, and final destruction. `Deno.core.resources`, `close`, `tryClose`
-  and `cancelRead` use the native table. Missing IDs throw the registered
-  `BadResource` class. Resource-backed I/O ops and runtime stdio registration
-  are still to be ported.
+  increasing resource IDs, take/replace, explicit close and cancellation hooks,
+  and final destruction. `Deno.core.resources`, `close`, `tryClose` and
+  `cancelRead` use the native table. Missing IDs throw the registered
+  `BadResource` class. Resource-backed read/write, sync read/write, write-all
+  and shutdown ops dispatch through the native resource vtable. Async methods
+  run on workers and synchronize their own state with cancellable `std.Io`
+  primitives; close hooks and ownership changes stay on the runtime thread.
+  Partial writes are retried by the default write-all implementation; a
+  zero-progress write fails instead of spinning. Unsupported methods use
+  deno_error's `NotSupported` class/message through the registered core error
+  builder. Runtime stdio registration, read-all, resource piping, chunk-owned
+  read fallbacks and complete native I/O error mapping still follow.
 
 - **Async ops:** `src/core/async_ops.zig` declares native ops with eager,
   deferred or lazy completion, wrapped by the existing `00_infra.js` promise
   stubs. Nonblocking ready bodies can run inline; concurrent bodies receive
-  native scalar/string arguments and an `AsyncScope` with I/O and an owned
-  result arena. Workers never receive V8 handles. Completions wake the event
-  loop and resolve promises on its thread. Ref/unref controls liveness;
-  cancellation and shutdown join each owned future before freeing its data.
-  The core async add/void/error test ops are ported. Resource-backed I/O ops,
-  metrics and fast calls remain to be ported.
+  native scalar/string/buffer/resource arguments and an `AsyncScope` with I/O
+  and an owned result arena. Workers never receive V8 handles. Completions wake
+  the event loop and resolve promises on its thread. Ref/unref controls
+  liveness; cancellation and shutdown join each owned future before freeing its
+  data. The core async add/void/error test ops are ported. Metrics and fast
+  calls remain to be ported.
 
 - **Buffer/resource bindings:** sync and async native ops accept typed resource
   handles and retained backing-store ranges. Buffer input modes mirror op2's
   Uint8Array, ArrayBuffer and any-buffer converters. Offset views, empty,
   detached, shared and resizable stores are supported. Native bodies borrow
   arguments; return a cloned buffer owner when returning an existing input.
-  Bindings release owners after conversion, errors, cancellation or shutdown,
-  on the runtime thread. Shared allocator ownership lets retained stores
-  survive isolate disposal and be rewrapped in another isolate.
+  Bindings release owners after conversion, errors, cancellation or shutdown, on
+  the runtime thread. Shared allocator ownership lets retained stores survive
+  isolate disposal and be rewrapped in another isolate.
 
-Next in phase 3: resource-backed I/O and unified I/O/platform wakeups, then
-remaining built-in ops.
+Next in phase 3: owned I/O byte results, remaining resource I/O ops and unified
+I/O/platform wakeups, then remaining built-in ops.
