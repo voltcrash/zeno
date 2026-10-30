@@ -1758,7 +1758,7 @@ test "resource I/O uses registered errors and validates erased arguments" {
         \\class Unsupported extends Error {}
         \\c.registerErrorClass('NotSupported', Unsupported);
         \\for (const operation of [() => c.readSync(0,b), () => c.writeSync(0,b),
-        \\  () => c.read(0,b), () => c.readAll(0), () => c.write(0,b), () => c.writeAll(0,b), () => c.shutdown(0)]) {
+        \\  () => c.read(0,b), () => c.readAll(0), () => c.write(0,b), () => c.writeAll(0,b), () => c.writeTypeError(0,'error'), () => c.shutdown(0)]) {
         \\  let caught = false;
         \\  try { await operation(); } catch (e) {
         \\    caught = e instanceof Unsupported && e.message === 'The operation is not supported';
@@ -1766,7 +1766,7 @@ test "resource I/O uses registered errors and validates erased arguments" {
         \\  if (!caught) throw new Error('unsupported I/O did not use registered class');
         \\}
         \\for (const operation of [() => c.readSync(99,b), () => c.writeSync(99,b),
-        \\  () => c.read(99,b), () => c.readAll(99), () => c.write(99,b), () => c.writeAll(99,b), () => c.shutdown(99)]) {
+        \\  () => c.read(99,b), () => c.readAll(99), () => c.write(99,b), () => c.writeAll(99,b), () => c.writeTypeError(99,'error'), () => c.shutdown(99)]) {
         \\  let caught = false;
         \\  try { await operation(); } catch (e) { caught = e instanceof c.BadResource; }
         \\  if (!caught) throw new Error('bad RID');
@@ -1775,6 +1775,194 @@ test "resource I/O uses registered errors and validates erased arguments" {
         \\catch (e) { if (!(e instanceof TypeError)) throw e; }
         \\await c.writeAll(0,new Uint8Array(0));
     , &exception);
+}
+
+test "sync and async native errors preserve prototypes, dynamic fields and additional properties" {
+    v8.initForTesting();
+    const E = @import("errors.zig");
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn describe(gpa: std.mem.Allocator, input: []const u8) !E.JsError {
+            const properties = try gpa.alloc(E.Property, 5);
+            properties[0] = .{ .name = "code", .value = .{ .string = "EACCES" } };
+            properties[1] = .{ .name = "status", .value = .{ .number = 403.25 } };
+            properties[2] = .{ .name = "message", .value = .{ .string = "do not overwrite" } };
+            properties[3] = .{ .name = "name", .value = .{ .string = "do not overwrite" } };
+            properties[4] = .{ .name = "detail", .value = .{ .string = input } };
+            return .{ .class_name = "PermissionDenied", .message = try std.fmt.allocPrint(gpa, "failure: {s}", .{input}), .properties = properties };
+        }
+        fn syncFail(scope: ops.Scope, input: []const u8) !void {
+            return scope.fail(try describe(scope.arena, input));
+        }
+        fn asyncFail(scope: a.AsyncScope, input: []const u8) !void {
+            return scope.fail(try describe(scope.allocator, input));
+        }
+    };
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        ops.op("op_payload_sync", F.syncFail),
+        a.decl("op_payload_ready", F.asyncFail, .{ .execution = .inline_ready }),
+        a.decl("op_payload_deferred", F.asyncFail, .{ .execution = .inline_ready, .scheduling = .deferred }),
+        a.decl("op_payload_worker", F.asyncFail, .{}),
+        a.decl("op_payload_lazy", F.asyncFail, .{ .scheduling = .lazy }),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///native-error-payloads.js",
+        \\const c = Deno.core;
+        \\class Permission extends Error { constructor(message) { super(message); this.name = 'PermissionDenied'; } }
+        \\c.registerErrorClass('PermissionDenied', Permission);
+        \\function check(e,input) {
+        \\  if (!(e instanceof Permission) || e.message !== `failure: ${input}` || e.name !== 'PermissionDenied') throw new Error('error identity/message');
+        \\  if (e.code !== 'EACCES' || e.status !== 403.25 || e.detail !== input) throw new Error('error properties');
+        \\  const d = Object.getOwnPropertyDescriptor(e, Symbol.for('errorAdditionalPropertyKeys'));
+        \\  if (!d || d.enumerable || d.writable || d.configurable || d.value.join() !== 'code,status,detail') throw new Error('property keys descriptor');
+        \\}
+        \\for (const op of [c.ops.op_payload_sync,c.ops.op_payload_ready,c.ops.op_payload_deferred,c.ops.op_payload_worker,c.ops.op_payload_lazy]) {
+        \\  let caught = false;
+        \\  try { await op('snowman ☃\u0000payload'); } catch (e) { check(e,'snowman ☃\u0000payload'); caught = true; }
+        \\  if (!caught) throw new Error('native error was ignored');
+        \\}
+        \\await Promise.all(Array.from({length:32}, (_,i) => {
+        \\  const input = `worker ${i}`;
+        \\  return c.ops.op_payload_worker(input).then(() => { throw new Error('worker succeeded'); }, e => check(e,input));
+        \\}));
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+}
+
+test "lazy ops submitted by promise continuations are polled before the loop waits" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn value() i32 {
+            return 42;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        a.decl("op_lazy_inline", F.value, .{ .execution = .inline_ready, .scheduling = .lazy }),
+        a.decl("op_lazy_worker", F.value, .{ .scheduling = .lazy }),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///lazy-continuations.js",
+        \\const o = Deno.core.ops;
+        \\await o.op_void_async_deferred();
+        \\if (await o.op_lazy_inline() !== 42) throw new Error('inline lazy result');
+        \\await o.op_void_async_deferred();
+        \\if (await o.op_lazy_worker() !== 42) throw new Error('worker lazy result');
+    , &exception);
+}
+
+test "native error property allocation failure still produces a JS error" {
+    v8.initForTesting();
+    const E = @import("errors.zig");
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var failing: std.testing.FailingAllocator = .init(gpa, .{ .fail_index = 0 });
+    var context: E.Context = .{ .exception = .{
+        .class_name = "Error",
+        .message = "original message",
+        .properties = &.{.{ .name = "code", .value = .{ .string = "EIO" } }},
+    } };
+    const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = failing.allocator(), .error_context = &context };
+    const value = try ops.errorValue(scope, error.OpError);
+    const message = try v8.getProperty(rt.isolate(), rt.context, @ptrCast(value), "message");
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, message);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("OutOfMemory", text);
+}
+
+test "failed error builders use Rust's message fallback before async stack handling" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn syncFail(scope: ops.Scope, class_name: []const u8) !void {
+            return scope.fail(.{ .class_name = class_name, .message = "native fallback message" });
+        }
+        fn asyncFail(scope: a.AsyncScope, class_name: []const u8) !void {
+            return scope.fail(.{ .class_name = class_name, .message = "native fallback message" });
+        }
+    };
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        ops.op("op_builder_sync", F.syncFail),
+        a.decl("op_builder_ready", F.asyncFail, .{ .execution = .inline_ready }),
+        a.decl("op_builder_deferred", F.asyncFail, .{ .execution = .inline_ready, .scheduling = .deferred }),
+        a.decl("op_builder_worker", F.asyncFail, .{}),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///native-error-fallback.js",
+        \\const c = Deno.core;
+        \\c.registerErrorClass('ThrowNull', class { constructor() { throw null; } });
+        \\c.registerErrorClass('ThrowRange', class { constructor() { throw new RangeError('Maximum call stack size exceeded'); } });
+        \\for (const name of ['ThrowNull','ThrowRange']) {
+        \\  for (const op of [c.ops.op_builder_sync,c.ops.op_builder_ready,c.ops.op_builder_deferred,c.ops.op_builder_worker]) {
+        \\    let caught = false;
+        \\    try { await op(name); } catch (e) {
+        \\      if (op === c.ops.op_builder_sync) {
+        \\        if (e !== 'native fallback message') throw new Error(`wrong native fallback: ${String(e)}`);
+        \\      } else {
+        \\        // The unchanged async stubs capture a stack on primitive rejections,
+        \\        // which V8 reports as invalid_argument. Preserve Rust's JS behavior.
+        \\        if (!(e instanceof TypeError) || e.message !== 'invalid_argument') throw new Error(`wrong async fallback: ${String(e)}`);
+        \\      }
+        \\      caught = true;
+        \\    }
+        \\    if (!caught) throw new Error('fallback succeeded');
+        \\  }
+        \\}
+        \\if (await c.ops.op_add_async(20,22) !== 42) throw new Error('exception stayed pending');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+}
+
+test "core writeTypeError retains the resource and borrowed message until completion" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const Capture = struct { data: [64]u8 = undefined, len: usize = 0, drops: usize = 0 };
+    const ErrorResource = struct {
+        capture: *Capture,
+        pub fn writeError(self: *@This(), io: std.Io, exception: R.JsError) !void {
+            try AsyncGateTest.gate.wait(io);
+            if (!std.mem.eql(u8, exception.class_name, "TypeError")) return error.WrongErrorClass;
+            @memcpy(self.capture.data[0..exception.message.len], exception.message);
+            self.capture.len = exception.message.len;
+        }
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.capture.drops += 1;
+        }
+    };
+    const gpa = std.testing.allocator;
+    AsyncGateTest.gate.reset();
+    var capture: Capture = .{};
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{ops.op("op_test_release", AsyncGateTest.release)} });
+    defer rt.destroy(gpa);
+    _ = try rt.resources.add(try R.Resource.create(gpa, ErrorResource, .{ .capture = &capture }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///resource-type-error.js",
+        \\import { op_write_type_error } from 'ext:core/ops';
+        \\const c = Deno.core;
+        \\const pending = op_write_type_error(0,'failure\u0000message☃');
+        \\c.close(0);
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\if (await pending !== null) throw new Error('writeTypeError result');
+        \\try { await c.writeTypeError(0,'again'); throw new Error('closed RID accepted'); }
+        \\catch (e) { if (!(e instanceof c.BadResource)) throw e; }
+    , &exception);
+    try std.testing.expectEqualStrings("failure\x00message☃", capture.data[0..capture.len]);
+    try std.testing.expectEqual(@as(usize, 1), capture.drops);
 }
 
 test "destroying a runtime cancels blocked resource I/O before final release" {

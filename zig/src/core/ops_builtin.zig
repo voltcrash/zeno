@@ -30,6 +30,7 @@ pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     async_ops.decl("op_pipe", opPipe, .{}),
     async_ops.decl("op_write", opWrite, .{}),
     async_ops.decl("op_write_all", opWriteAll, .{}),
+    async_ops.decl("op_write_type_error", opWriteTypeError, .{}),
     async_ops.decl("op_shutdown", opShutdown, .{}),
     op("op_read_sync", opReadSync),
     op("op_write_sync", opWriteSync),
@@ -190,6 +191,9 @@ fn opWrite(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u
 }
 fn opWriteAll(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !void {
     try resource.writeAll(scope.io, try buffer.bytes());
+}
+fn opWriteTypeError(scope: async_ops.AsyncScope, resource: Resource, message: []const u8) !void {
+    try resource.writeError(scope.io, @import("errors.zig").JsError.typeError(message));
 }
 fn opShutdown(scope: async_ops.AsyncScope, resource: Resource) !void {
     try resource.shutdown(scope.io);

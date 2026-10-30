@@ -5,6 +5,7 @@
 //! retain the value until their work finishes.
 const std = @import("std");
 pub const ByteView = @import("byte_view.zig").ByteView;
+pub const JsError = @import("errors.zig").JsError;
 
 pub const ResourceId = u32;
 pub const LookupError = error{BadResourceId};
@@ -19,6 +20,7 @@ const VTable = struct {
     read: *const fn (*Header, std.Io, []u8) anyerror!usize,
     read_chunk: *const fn (*Header, std.Io, std.mem.Allocator, usize) anyerror!ByteView,
     write: *const fn (*Header, std.Io, []const u8) anyerror!usize,
+    write_error: *const fn (*Header, std.Io, JsError) anyerror!void,
     read_sync: *const fn (*Header, std.Io, []u8) anyerror!usize,
     write_sync: *const fn (*Header, std.Io, []const u8) anyerror!usize,
     write_all: *const fn (*Header, std.Io, []const u8) anyerror!void,
@@ -41,6 +43,7 @@ const Header = struct {
 /// sizeHint(*const T) returns SizeHint; it may be queried on an I/O worker.
 /// readChunk(*T, std.Io, Allocator, limit) returns an owned !ByteView. A
 /// resource can provide this instead of read, or override both paths.
+/// writeError(*T, std.Io, JsError) returns !void and borrows the error fields.
 pub const Resource = struct {
     pub const ResourceType = void;
     header: *Header,
@@ -90,6 +93,9 @@ pub const Resource = struct {
     }
     pub fn write(self: Resource, io: std.Io, data: []const u8) !usize {
         return self.header.vtable.write(self.header, io, data);
+    }
+    pub fn writeError(self: Resource, io: std.Io, exception: JsError) !void {
+        return self.header.vtable.write_error(self.header, io, exception);
     }
     pub fn readSync(self: Resource, io: std.Io, data: []u8) !usize {
         return self.header.vtable.read_sync(self.header, io, data);
@@ -147,6 +153,7 @@ fn Impl(comptime T: type) type {
             .read = read,
             .read_chunk = readChunk,
             .write = write,
+            .write_error = writeError,
             .read_sync = readSync,
             .write_sync = writeSync,
             .write_all = writeAll,
@@ -201,6 +208,10 @@ fn Impl(comptime T: type) type {
         }
         fn write(h: *Header, io: std.Io, data: []const u8) !usize {
             if (@hasDecl(T, "write")) return node(h).value.write(io, data);
+            return error.NotSupported;
+        }
+        fn writeError(h: *Header, io: std.Io, exception: JsError) !void {
+            if (@hasDecl(T, "writeError")) return node(h).value.writeError(io, exception);
             return error.NotSupported;
         }
         fn readSync(h: *Header, io: std.Io, data: []u8) !usize {
@@ -399,6 +410,7 @@ test "I/O defaults and partial write-all follow resource contracts" {
     try std.testing.expectError(error.NotSupported, empty.readChunk(io, gpa, data.len));
     try std.testing.expectError(error.NotSupported, empty.readSync(io, &data));
     try std.testing.expectError(error.NotSupported, empty.write(io, "x"));
+    try std.testing.expectError(error.NotSupported, empty.writeError(io, JsError.typeError("stream error")));
     try std.testing.expectError(error.NotSupported, empty.writeSync(io, "x"));
     try std.testing.expectError(error.NotSupported, empty.shutdown(io));
     try empty.writeAll(io, "");
@@ -424,6 +436,26 @@ test "I/O defaults and partial write-all follow resource contracts" {
     try std.testing.expectEqual(@as(usize, 4), held.ptr().calls);
     // Providing async write does not silently implement synchronous write.
     try std.testing.expectError(error.NotSupported, writer.writeSync(io, "x"));
+}
+
+test "resources receive typed native error descriptions and propagate write failures" {
+    const Receiver = struct {
+        calls: usize = 0,
+        pub fn writeError(self: *@This(), _: std.Io, exception: JsError) !void {
+            try std.testing.expectEqualStrings("TypeError", exception.class_name);
+            if (std.mem.eql(u8, exception.message, "reject")) return error.WriteFailure;
+            try std.testing.expectEqualStrings("stream failure", exception.message);
+            self.calls += 1;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const resource = try Resource.create(gpa, Receiver, .{});
+    defer resource.deinit();
+    try resource.writeError(std.testing.io, JsError.typeError("stream failure"));
+    try std.testing.expectError(error.WriteFailure, resource.writeError(std.testing.io, JsError.typeError("reject")));
+    const held = try resource.downcast(Receiver);
+    defer held.deinit();
+    try std.testing.expectEqual(@as(usize, 1), held.ptr().calls);
 }
 
 test "write-all handles zero progress, native errors and overrides" {

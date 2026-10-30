@@ -54,30 +54,31 @@ have no V8 for now.
 
 ## Layout
 
-| Zig                            | Ported from                                     |
-| ------------------------------ | ----------------------------------------------- |
-| `src/main.zig`                 | `cli/main.rs`, `cli/lib.rs`                     |
-| `src/version.zig`              | `cli/lib/version.rs`                            |
-| `src/cli/types.zig`            | `libs/cli_parser/src/types.rs`                  |
-| `src/cli/defs.zig`             | `libs/cli_parser/src/defs.rs` (generated)       |
-| `src/cli/env_vars.zig`         | `libs/cli_parser/src/env_vars.rs` (generated)   |
-| `src/cli/flags.zig`            | `libs/cli_parser/src/{parse,convert}.rs`        |
-| `src/cli/help.zig`             | `libs/cli_parser/src/help.rs`                   |
-| `src/v8/`                      | the `v8` crate (rusty_v8)                       |
-| `src/core/runtime.zig`         | `libs/core/runtime/jsruntime.rs`                |
-| `src/core/resources.zig`       | `libs/core/io/{resource,resource_table}.rs`     |
-| `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all/pipe        |
-| `src/core/buffer_strategy.zig` | `libs/core/io/buffer_strategy.rs`               |
-| `src/core/byte_view.zig`       | `libs/core/io/buffers.rs` owned views           |
-| `src/core/async_ops.zig`       | `libs/core/runtime/op_driver`                   |
-| `src/core/async_cancel.zig`    | `libs/core/async_cancel.rs` cancel handle       |
-| `src/core/pipe_cancel.zig`     | `libs/core/ops_builtin.rs` pipe cancellation    |
-| `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
-| `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)               |
-| `src/core/url.zig`             | `resolve_import` (interim URL handling)         |
-| `src/tools/run.zig`            | `cli/tools/run/mod.rs` (`run_script`)           |
-| `src/tools/eval.zig`           | `cli/tools/run/mod.rs` (`eval_command`)         |
-| `src/cli/golden/`              | help output of the Rust parser (generated)      |
+| Zig                            | Ported from                                      |
+| ------------------------------ | ------------------------------------------------ |
+| `src/main.zig`                 | `cli/main.rs`, `cli/lib.rs`                      |
+| `src/version.zig`              | `cli/lib/version.rs`                             |
+| `src/cli/types.zig`            | `libs/cli_parser/src/types.rs`                   |
+| `src/cli/defs.zig`             | `libs/cli_parser/src/defs.rs` (generated)        |
+| `src/cli/env_vars.zig`         | `libs/cli_parser/src/env_vars.rs` (generated)    |
+| `src/cli/flags.zig`            | `libs/cli_parser/src/{parse,convert}.rs`         |
+| `src/cli/help.zig`             | `libs/cli_parser/src/help.rs`                    |
+| `src/v8/`                      | the `v8` crate (rusty_v8)                        |
+| `src/core/runtime.zig`         | `libs/core/runtime/jsruntime.rs`                 |
+| `src/core/resources.zig`       | `libs/core/io/{resource,resource_table}.rs`      |
+| `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all/pipe         |
+| `src/core/buffer_strategy.zig` | `libs/core/io/buffer_strategy.rs`                |
+| `src/core/byte_view.zig`       | `libs/core/io/buffers.rs` owned views            |
+| `src/core/async_ops.zig`       | `libs/core/runtime/op_driver`                    |
+| `src/core/async_cancel.zig`    | `libs/core/async_cancel.rs` cancel handle        |
+| `src/core/pipe_cancel.zig`     | `libs/core/ops_builtin.rs` pipe cancellation     |
+| `src/core/errors.zig`          | `deno_error::JsErrorClass`, `libs/core/error.rs` |
+| `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice`  |
+| `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)                |
+| `src/core/url.zig`             | `resolve_import` (interim URL handling)          |
+| `src/tools/run.zig`            | `cli/tools/run/mod.rs` (`run_script`)            |
+| `src/tools/eval.zig`           | `cli/tools/run/mod.rs` (`eval_command`)          |
+| `src/cli/golden/`              | help output of the Rust parser (generated)       |
 
 ## Roadmap
 
@@ -144,15 +145,15 @@ have no V8 for now.
   increasing resource IDs, take/replace, explicit close and cancellation hooks,
   and final destruction. `Deno.core.resources`, `close`, `tryClose` and
   `cancelRead` use the native table. Missing IDs throw the registered
-  `BadResource` class. Resource-backed read/write, sync read/write, write-all
-  and shutdown ops dispatch through the native resource vtable. Async methods
-  run on workers and synchronize their own state with cancellable `std.Io`
-  primitives; close hooks and ownership changes stay on the runtime thread.
-  Partial writes are retried by the default write-all implementation; a
-  zero-progress write fails instead of spinning. Unsupported methods use
-  deno_error's `NotSupported` class/message through the registered core error
-  builder. Runtime stdio registration and complete native I/O error mapping
-  still follow.
+  `BadResource` class. Resource-backed read/write, sync read/write, write-all,
+  type-error writes and shutdown ops dispatch through the native resource
+  vtable. Async methods run on workers and synchronize their own state with
+  cancellable `std.Io` primitives; close hooks and ownership changes stay on the
+  runtime thread. Partial writes are retried by the default write-all
+  implementation; a zero-progress write fails instead of spinning. Unsupported
+  methods use deno_error's `NotSupported` class/message through the registered
+  core error builder. Runtime stdio registration and complete native I/O error
+  mapping still follow.
 
 - **Native chunk reads:** resources can supply source-owned byte chunks,
   override BYOB reads, or provide both. Core reads copy a chunk into the
@@ -191,7 +192,18 @@ have no V8 for now.
   the event loop and resolve promises on its thread. Ref/unref controls
   liveness; cancellation and shutdown join each owned future before freeing its
   data. The core async add/void/error test ops are ported. Metrics and fast
-  calls remain to be ported.
+  calls remain to be ported. Lazy work submitted by promise continuations is
+  polled before the event loop waits for I/O.
+
+- **Native error payloads:** sync and async bodies can publish a registered
+  error class, dynamic message and string/number additional properties through
+  `Scope.fail` / `AsyncScope.fail`. Borrowed fields remain valid in static,
+  input or op-arena storage until the runtime builds the error. Existing core JS
+  preserves registered prototypes, protects existing properties and records
+  additional-property keys. Failed JS error constructors use Rust's native
+  message fallback; existing async stub stack handling is retained. Metadata
+  allocation failures still produce a JS error. `core.writeTypeError` sends a
+  borrowed native TypeError description to a resource's `writeError` method.
 
 - **Buffer/resource bindings:** sync and async native ops accept typed resource
   handles and retained backing-store ranges. Buffer input modes mirror op2's

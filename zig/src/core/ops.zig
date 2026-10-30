@@ -13,7 +13,9 @@
 //!   arguments are borrowed by the function and released by the binding.
 //! - Return types: `void`, `bool`, `i32`, `u32`, `f64`, `[]const u8` (copied
 //!   into a JS string) or `*const v8.Value`, optionally as an error union. An
-//!   error is thrown as a JS `Error` named after it.
+//!   error union throws a JS error. `Scope.fail` supplies a registered class,
+//!   message and additional properties; other errors use their Zig error name
+//!   as the message.
 //!
 //! Async declarations live in `async_ops.zig`; fast calls and metrics follow.
 
@@ -21,6 +23,7 @@ const std = @import("std");
 const v8 = @import("../v8/v8.zig");
 const c = v8.c;
 const JsRuntime = @import("runtime.zig").JsRuntime;
+const errors = @import("errors.zig");
 
 pub const OpDecl = struct {
     name: []const u8,
@@ -38,6 +41,13 @@ pub const Scope = struct {
     arena: std.mem.Allocator,
     /// Available while converting async-only arguments on the runtime thread.
     promise_id: ?i32 = null,
+    error_context: ?*errors.Context = null,
+
+    /// Publish a typed native error. Dynamic fields belong in arena/input
+    /// storage; the binding builds the JS error before releasing that storage.
+    pub fn fail(self: Scope, exception: errors.JsError) error{OpError} {
+        return self.error_context.?.fail(exception);
+    }
 };
 
 /// The isolate data slot holding the `*JsRuntime`.
@@ -59,11 +69,13 @@ fn Callback(comptime func: anytype) type {
             const rt: *JsRuntime = @ptrCast(@alignCast(c.v8__Isolate__GetData(isolate, runtime_slot).?));
             var arena_state: std.heap.ArenaAllocator = .init(rt.gpa);
             defer arena_state.deinit();
+            var error_context: errors.Context = .{};
             const scope: Scope = .{
                 .runtime = rt,
                 .isolate = isolate,
                 .context = rt.context,
                 .arena = arena_state.allocator(),
+                .error_context = &error_context,
             };
 
             var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
@@ -177,6 +189,14 @@ pub fn throwError(scope: Scope, err: anyerror) void {
 }
 
 pub fn errorValue(scope: Scope, err: anyerror) ConvertError!*const v8.Value {
+    if (err == error.OpError) {
+        if (scope.error_context) |context| if (context.exception) |exception| {
+            return exceptionValue(scope, exception) catch |conversion_error| {
+                if (conversion_error == error.JsException) return conversion_error;
+                return c.v8__Exception__Error(try v8.newString(scope.isolate, @errorName(conversion_error)));
+            };
+        };
+    }
     if (err == error.NotSupported) return customError(scope, "NotSupported", "The operation is not supported");
     if (err == error.OperationCanceled) return customError(scope, "Interrupted", "operation canceled");
     return c.v8__Exception__Error(try v8.newString(scope.isolate, @errorName(err)));
@@ -189,19 +209,47 @@ pub fn throwCustomError(scope: Scope, class_name: []const u8, message: []const u
 }
 
 pub fn customError(scope: Scope, class_name: []const u8, message: []const u8) ConvertError!*const v8.Value {
+    return exceptionValue(scope, .{ .class_name = class_name, .message = message });
+}
+
+/// Rust's to_v8_error calls the captured builder with class, message and
+/// optional additional properties. Failed builders fall back to the message.
+pub fn exceptionValue(scope: Scope, exception: errors.JsError) ConvertError!*const v8.Value {
     const bootstrap = scope.runtime.captured_bootstrap orelse {
         // During bootstrap the registered constructors may not exist yet.
-        const err = c.v8__Exception__Error(try v8.newString(scope.isolate, message));
-        try v8.setProperty(scope.isolate, scope.context, @ptrCast(err), "name", @ptrCast(try v8.newString(scope.isolate, class_name)));
+        const err = c.v8__Exception__Error(try v8.newString(scope.isolate, exception.message));
+        try v8.setProperty(scope.isolate, scope.context, @ptrCast(err), "name", @ptrCast(try v8.newString(scope.isolate, exception.class_name)));
         return err;
     };
     const core = try v8.getProperty(scope.isolate, scope.context, @ptrCast(bootstrap.get(scope.isolate)), "core");
     const builder = try v8.getProperty(scope.isolate, scope.context, @ptrCast(core), "buildCustomError");
-    const args = [_]*const v8.Value{
-        @ptrCast(try v8.newString(scope.isolate, class_name)),
-        @ptrCast(try v8.newString(scope.isolate, message)),
+    var args = [_]*const v8.Value{
+        @ptrCast(try v8.newString(scope.isolate, exception.class_name)),
+        @ptrCast(try v8.newString(scope.isolate, exception.message)),
+        @ptrCast(c.v8__Undefined(scope.isolate)),
     };
-    return c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), 2, &args) orelse error.JsException;
+    if (exception.properties.len > 0) {
+        var properties: std.ArrayList(*const v8.Value) = .empty;
+        defer properties.deinit(scope.arena);
+        for (exception.properties) |property| {
+            const pair = [_]*const v8.Value{
+                @ptrCast(try v8.newString(scope.isolate, property.name)),
+                switch (property.value) {
+                    .string => |value| @ptrCast(try v8.newString(scope.isolate, value)),
+                    .number => |value| @ptrCast(c.v8__Number__New(scope.isolate, value)),
+                },
+            };
+            try properties.append(scope.arena, @ptrCast(c.v8__Array__New_with_elements(scope.isolate, &pair, 2)));
+        }
+        args[2] = @ptrCast(c.v8__Array__New_with_elements(scope.isolate, properties.items.ptr, properties.items.len));
+    }
+    var catcher: v8.TryCatch = undefined;
+    catcher.init(scope.isolate);
+    defer catcher.deinit();
+    return c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), if (exception.properties.len > 0) 3 else 2, &args) orelse {
+        if (catcher.hasCaught()) c.v8__TryCatch__Reset(&catcher.raw);
+        return args[1];
+    };
 }
 
 /// Install `ops` on `Deno.core.ops`.
