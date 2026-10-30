@@ -4,6 +4,7 @@
 const v8 = @import("../v8/v8.zig");
 const c = v8.c;
 const ops = @import("ops.zig");
+const std = @import("std");
 
 pub const Mode = enum { typed_u8, array_buffer, any };
 pub const JsBuffer = Buffer(.typed_u8);
@@ -19,6 +20,14 @@ pub fn Buffer(comptime mode: Mode) type {
         store: c.SharedBackingStore,
         offset: usize,
         len: usize,
+
+        /// Consume an allocation from std.heap.smp_allocator. The backing
+        /// store owns it independently of any runtime or per-op arena, and
+        /// may release it on a V8 thread. No isolate/JS handles are needed.
+        pub fn fromOwnedSlice(data: []u8) Self {
+            const store = c.v8__ArrayBuffer__NewBackingStore__with_data(if (data.len == 0) null else data.ptr, data.len, freeOwnedSlice, null);
+            return .{ .store = c.std__shared_ptr__v8__BackingStore__CONVERT__std__unique_ptr(store), .offset = 0, .len = data.len };
+        }
 
         pub fn fromV8(scope: ops.Scope, value: *const v8.Value) ops.ConvertError!Self {
             var buffer: *const c.ArrayBuffer = undefined;
@@ -81,6 +90,10 @@ pub fn Buffer(comptime mode: Mode) type {
             return @ptrCast(c.v8__Function__NewInstance(@ptrCast(ctor), scope.context, 3, &args) orelse return error.JsException);
         }
     };
+}
+
+fn freeOwnedSlice(data: ?*anyopaque, len: usize, _: ?*anyopaque) callconv(.c) void {
+    if (data) |ptr| std.heap.smp_allocator.free(@as([*]u8, @ptrCast(ptr))[0..len]);
 }
 
 fn fail(scope: ops.Scope, message: []const u8) ops.ConvertError {

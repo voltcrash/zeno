@@ -54,25 +54,27 @@ have no V8 for now.
 
 ## Layout
 
-| Zig                      | Ported from                                     |
-| ------------------------ | ----------------------------------------------- |
-| `src/main.zig`           | `cli/main.rs`, `cli/lib.rs`                     |
-| `src/version.zig`        | `cli/lib/version.rs`                            |
-| `src/cli/types.zig`      | `libs/cli_parser/src/types.rs`                  |
-| `src/cli/defs.zig`       | `libs/cli_parser/src/defs.rs` (generated)       |
-| `src/cli/env_vars.zig`   | `libs/cli_parser/src/env_vars.rs` (generated)   |
-| `src/cli/flags.zig`      | `libs/cli_parser/src/{parse,convert}.rs`        |
-| `src/cli/help.zig`       | `libs/cli_parser/src/help.rs`                   |
-| `src/v8/`                | the `v8` crate (rusty_v8)                       |
-| `src/core/runtime.zig`   | `libs/core/runtime/jsruntime.rs`                |
-| `src/core/resources.zig` | `libs/core/io/{resource,resource_table}.rs`     |
-| `src/core/async_ops.zig` | `libs/core/runtime/op_driver`                   |
-| `src/core/buffers.zig`   | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
-| `src/core/modules.zig`   | `libs/core/modules` (`ModuleMap`)               |
-| `src/core/url.zig`       | `resolve_import` (interim URL handling)         |
-| `src/tools/run.zig`      | `cli/tools/run/mod.rs` (`run_script`)           |
-| `src/tools/eval.zig`     | `cli/tools/run/mod.rs` (`eval_command`)         |
-| `src/cli/golden/`        | help output of the Rust parser (generated)      |
+| Zig                            | Ported from                                     |
+| ------------------------------ | ----------------------------------------------- |
+| `src/main.zig`                 | `cli/main.rs`, `cli/lib.rs`                     |
+| `src/version.zig`              | `cli/lib/version.rs`                            |
+| `src/cli/types.zig`            | `libs/cli_parser/src/types.rs`                  |
+| `src/cli/defs.zig`             | `libs/cli_parser/src/defs.rs` (generated)       |
+| `src/cli/env_vars.zig`         | `libs/cli_parser/src/env_vars.rs` (generated)   |
+| `src/cli/flags.zig`            | `libs/cli_parser/src/{parse,convert}.rs`        |
+| `src/cli/help.zig`             | `libs/cli_parser/src/help.rs`                   |
+| `src/v8/`                      | the `v8` crate (rusty_v8)                       |
+| `src/core/runtime.zig`         | `libs/core/runtime/jsruntime.rs`                |
+| `src/core/resources.zig`       | `libs/core/io/{resource,resource_table}.rs`     |
+| `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all             |
+| `src/core/buffer_strategy.zig` | `libs/core/io/buffer_strategy.rs`               |
+| `src/core/async_ops.zig`       | `libs/core/runtime/op_driver`                   |
+| `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
+| `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)               |
+| `src/core/url.zig`             | `resolve_import` (interim URL handling)         |
+| `src/tools/run.zig`            | `cli/tools/run/mod.rs` (`run_script`)           |
+| `src/tools/eval.zig`           | `cli/tools/run/mod.rs` (`eval_command`)         |
+| `src/cli/golden/`              | help output of the Rust parser (generated)      |
 
 ## Roadmap
 
@@ -146,8 +148,17 @@ have no V8 for now.
   Partial writes are retried by the default write-all implementation; a
   zero-progress write fails instead of spinning. Unsupported methods use
   deno_error's `NotSupported` class/message through the registered core error
-  builder. Runtime stdio registration, read-all, resource piping, chunk-owned
-  read fallbacks and complete native I/O error mapping still follow.
+  builder. Runtime stdio registration, resource piping, chunk-owned read
+  fallbacks and complete native I/O error mapping still follow.
+
+- **Read-all and owned byte results:** `Deno.core.readAll` uses Rust's adaptive
+  buffer strategy, including size hints, short reads, saturating arithmetic and
+  capped growth. Hints only guide allocation; reads continue until EOF. Native
+  output allocations transfer to a shared V8 backing store without a further
+  copy into V8. Their deleter uses the process-wide thread-safe allocator, so
+  byte results outlive operation arenas and can survive isolate disposal.
+  Allocation failures, failed reads and canceled workers release partial output
+  before dropping the resource owner.
 
 - **Async ops:** `src/core/async_ops.zig` declares native ops with eager,
   deferred or lazy completion, wrapped by the existing `00_infra.js` promise
@@ -168,5 +179,5 @@ have no V8 for now.
   the runtime thread. Shared allocator ownership lets retained stores survive
   isolate disposal and be rewrapped in another isolate.
 
-Next in phase 3: owned I/O byte results, remaining resource I/O ops and unified
-I/O/platform wakeups, then remaining built-in ops.
+Next in phase 3: remaining resource I/O ops and unified I/O/platform wakeups,
+then remaining built-in ops.

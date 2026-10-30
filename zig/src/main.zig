@@ -81,6 +81,8 @@ test {
     std.testing.refAllDecls(@This());
     _ = flags;
     _ = @import("core/resources.zig");
+    _ = @import("core/resource_io.zig");
+    _ = @import("core/buffer_strategy.zig");
     _ = @import("cli/parse.zig");
     if (build_options.have_v8) {
         _ = @import("core/runtime.zig");
