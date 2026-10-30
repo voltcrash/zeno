@@ -151,7 +151,7 @@ pub const ModuleMap = struct {
             return error.JsException;
         }
         const result = c.v8__Module__Evaluate(module, ctx) orelse return error.JsException;
-        c.v8__Isolate__PerformMicrotaskCheckpoint(rt.isolate());
+        try rt.runEventLoop(if (c.v8__Value__IsPromise(result)) @ptrCast(result) else null, exception);
         if (c.v8__Module__GetStatus(module) == .errored) {
             exception.* = c.v8__Module__GetException(module);
             return error.JsException;
@@ -165,7 +165,7 @@ pub const ModuleMap = struct {
                     exception.* = c.v8__Promise__Result(promise);
                     return error.JsException;
                 },
-                // There's no event loop yet that could settle it.
+                // No referenced timer remains that could settle it.
                 .pending => return error.JsException,
             }
         }

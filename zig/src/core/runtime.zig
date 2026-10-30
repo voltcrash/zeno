@@ -1,8 +1,8 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
 //! The JavaScript runtime: an isolate with one context, bootstrapped with
 //! `libs/core`'s JavaScript. The start of the port of `JsRuntime` from
-//! `libs/core/runtime/jsruntime.rs`; modules, async ops and the event loop
-//! come later.
+//! `libs/core/runtime/jsruntime.rs`; async I/O and the remaining event loop
+//! phases come later.
 
 const std = @import("std");
 const v8 = @import("../v8/v8.zig");
@@ -30,6 +30,9 @@ pub const JsRuntime = struct {
     /// The bootstrap object captured by `01_core.js`.
     captured_bootstrap: ?v8.Global(v8.Value) = null,
     modules: modules.ModuleMap,
+    timers: @import("timers.zig").Timers,
+    process_timers: ?v8.Global(v8.c.Function) = null,
+    dispatched_exception: ?v8.Global(v8.Value) = null,
 
     pub const CreateError = error{ OutOfMemory, JsException, CoreBootstrapFailed };
 
@@ -42,7 +45,6 @@ pub const JsRuntime = struct {
     /// runtime must stay at a stable address, so it's heap-allocated.
     pub fn create(gpa: std.mem.Allocator, io: std.Io, options: Options) CreateError!*JsRuntime {
         const self = try gpa.create(JsRuntime);
-        errdefer gpa.destroy(self);
         self.* = .{
             .owned = .init(),
             .scope = undefined,
@@ -51,20 +53,37 @@ pub const JsRuntime = struct {
             .io = io,
             .ext_import_meta_proto = undefined,
             .modules = .init(gpa),
+            .timers = .init(io),
         };
         const iso = self.owned.isolate;
+        // Commit JS's returned timer expiry before promise continuations can
+        // schedule new timers, matching Deno's explicit microtask policy.
+        v8.c.v8__Isolate__SetMicrotasksPolicy(iso, .explicit);
         v8.c.v8__Isolate__SetData(iso, ops.runtime_slot, self);
         v8.c.v8__Isolate__SetHostInitializeImportMetaObjectCallback(iso, modules.ModuleMap.initializeImportMeta);
         self.scope.init(iso);
         self.context = v8.newContext(iso);
         v8.c.v8__Context__Enter(self.context);
         self.ext_import_meta_proto = .init(iso, v8.c.v8__Object__New(iso));
+        errdefer self.destroy(gpa);
         try self.bootstrapCore(options.ops);
         try self.installTemporaryConsole();
+        // JS owns these counters until native shared buffer access is needed.
+        var exception: ?[]u8 = null;
+        defer if (exception) |e| gpa.free(e);
+        const callback = try self.executeScript(gpa, "ext:core/timer_setup.js",
+            \\Deno.core.__setTickInfo(new Uint8Array(2));
+            \\Deno.core.__setTimerInfo(new Int32Array(1));
+            \\Deno.core.__processTimers
+        , &exception);
+        self.process_timers = .init(iso, @ptrCast(callback));
         return self;
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        if (self.process_timers) |f| f.deinit();
+        if (self.dispatched_exception) |e| e.deinit();
+        self.timers.active.deinit(gpa);
         self.modules.deinit();
         if (self.captured_bootstrap) |g| g.deinit();
         self.ext_import_meta_proto.deinit();
@@ -201,6 +220,42 @@ pub const JsRuntime = struct {
                     try gpa.dupe(u8, "Top-level await promise never resolved");
                 return error.JsException;
             },
+        }
+    }
+
+    /// Drive the JS timer queue until no referenced wakeup remains. Async
+    /// I/O, nextTicks, immediates and platform tasks are added separately.
+    pub fn runEventLoop(self: *JsRuntime, main_promise: ?*const v8.c.Promise, thrown: *?*const v8.Value) v8.Error!void {
+        const c = v8.c;
+        const iso = self.isolate();
+        while (true) {
+            c.v8__Isolate__PerformMicrotaskCheckpoint(iso);
+            if (self.dispatched_exception) |e| {
+                thrown.* = e.get(iso);
+                e.deinit();
+                self.dispatched_exception = null;
+                return error.JsException;
+            }
+            if (main_promise) |promise| {
+                if (c.v8__Promise__State(promise) == .rejected) {
+                    c.v8__Promise__MarkAsHandled(promise);
+                    thrown.* = c.v8__Promise__Result(promise);
+                    return error.JsException;
+                }
+            }
+            if (!self.timers.refed or self.timers.deadline_ms == null) return;
+            self.timers.wait(self.io);
+            // Keep handles created by each iteration bounded, including when
+            // a repeating timer keeps the process alive indefinitely.
+            var scope: v8.HandleScope = undefined;
+            scope.init(iso);
+            defer scope.deinit();
+            const now = c.v8__Number__New(iso, self.timers.now(self.io));
+            const result = c.v8__Function__Call(self.process_timers.?.get(iso), self.context, @ptrCast(c.v8__Undefined(iso)), 1, &.{@ptrCast(now)}) orelse return error.JsException;
+            var expiry: c.Maybe(f64) = undefined;
+            c.v8__Value__NumberValue(result, self.context, &expiry);
+            if (!expiry.has_value) return error.JsException;
+            self.timers.setExpiry(self.io, expiry.value);
         }
     }
 
@@ -443,4 +498,116 @@ test "core value predicates inspect V8 types without coercion" {
         \\if (!Deno.core.isModuleNamespaceObject(namespace)) throw new Error('namespace');
         \\if (!namespace.op_is_map(new Map())) throw new Error('synthetic export');
     , &exception);
+}
+
+test "core timers drive top-level await, cancellation and microtasks" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///timers.js",
+        \\const c = Deno.core;
+        \\const events = [];
+        \\const timer = (fn, delay, repeat = false, ref = true) => c.createTimer(fn, delay, undefined, repeat, ref, false);
+        \\const cancelled = timer(() => { throw new Error("cancelled timer fired"); }, 1);
+        \\c.cancelTimer(cancelled);
+        \\c.cancelTimer(cancelled);
+        \\timer(() => events.push("unref"), 100000, false, false);
+        \\await new Promise(resolve => timer(() => {
+        \\  events.push("timer");
+        \\  queueMicrotask(() => events.push("microtask"));
+        \\  resolve();
+        \\}, 2));
+        \\events.push("await");
+        \\let count = 0;
+        \\const interval = timer(() => {
+        \\  events.push(++count);
+        \\  if (count === 3) {
+        \\    c.cancelTimer(interval);
+        \\    timer(() => events.push("last"), 1);
+        \\  }
+        \\}, 1, true);
+        \\globalThis.timerEvents = events;
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    const result = try rt.executeScript(gpa, "test.js", "timerEvents.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("timer,microtask,await,1,2,3,last", text);
+    // Only the unreferenced timer remains tracked; it did not keep us alive.
+    try std.testing.expectEqual(@as(usize, 1), rt.timers.active.count());
+    try std.testing.expect(!rt.timers.refed);
+}
+
+test "timer callback and microtask errors become runtime errors" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{
+        "Deno.core.createTimer(() => { throw new Error('timer boom'); }, 1, undefined, false, true, false)",
+        "Deno.core.createTimer(() => queueMicrotask(() => { throw new Error('microtask boom'); }), 1, undefined, false, true, false)",
+    }, [_][]const u8{ "Error: timer boom", "Error: microtask boom" }) |source, prefix| {
+        const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+        defer rt.destroy(gpa);
+        var exception: ?[]u8 = null;
+        defer if (exception) |e| gpa.free(e);
+        try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///timer-error.js", source, &exception));
+        try std.testing.expect(std.mem.startsWith(u8, exception.?, prefix));
+    }
+}
+
+test "unreferenced timers do not resolve a pending main module" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///unref.js",
+        \\await new Promise(resolve => {
+        \\  const t = Deno.core.createTimer(resolve, 100000, undefined, false, false, false);
+        \\  Deno.core.refTimer(t);
+        \\  Deno.core.unrefTimer(t);
+        \\});
+    , &exception));
+    try std.testing.expectEqualStrings("Top-level await promise never resolved", exception.?);
+}
+
+test "main module rejection does not wait for live timers" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///reject.js",
+        \\Deno.core.createTimer(() => {}, 100000, undefined, false, true, false);
+        \\await Promise.reject(new Error('early rejection'));
+    , &exception));
+    try std.testing.expect(std.mem.startsWith(u8, exception.?, "Error: early rejection"));
+}
+
+test "microtasks run between callbacks in the same timer bucket" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///timer-order.js",
+        \\globalThis.order = [];
+        \\Deno.core.createTimer(() => {
+        \\  order.push('first');
+        \\  queueMicrotask(() => order.push('microtask'));
+        \\}, 1, undefined, false, true, false);
+        \\Deno.core.createTimer((arg) => order.push(arg), 1, ['second'], false, true, false);
+    , &exception);
+    const result = try rt.executeScript(gpa, "test.js", "order.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("first,microtask,second", text);
+    try std.testing.expectEqual(@as(usize, 0), rt.timers.active.count());
 }

@@ -112,5 +112,13 @@ have no V8 for now.
   with `String()`, and there is no `Deno` namespace beyond `Deno.core`.
 - Every other subcommand exits with "has not been ported to Zig yet".
 
-Next in phase 3: ES modules (`ext:core/mod.js`, `deno eval` as a module), async
-ops and the event loop (timers), then the rest of the built-in ops.
+- **Core timers:** `Deno.core.createTimer`, cancellation, repeats and ref/unref
+  run through the unmodified `02_timers.js` queue with a native monotonic
+  wakeup. Module evaluation drives timers and explicit microtask checkpoints;
+  top-level await can settle via a timer. Callback errors reach the CLI.
+  Public `setTimeout`/`setInterval` await the web extension. Async I/O,
+  nextTick/immediate queues, general unhandled promise rejection tracking and
+  V8 platform tasks are not wired yet.
+
+Next in phase 3: nextTick/immediate queues, promise rejection tracking, async
+ops and platform tasks, then the remaining built-in ops.

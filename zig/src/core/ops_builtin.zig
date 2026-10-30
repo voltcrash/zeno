@@ -13,6 +13,12 @@ const Scope = ops.Scope;
 pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_str_byte_length", opStrByteLength),
     op("op_print", opPrint),
+    op("op_timer_now", opTimerNow),
+    op("op_timer_schedule", opTimerSchedule),
+    op("op_timer_track", opTimerTrack),
+    op("op_timer_untrack", opTimerUntrack),
+    op("op_run_microtasks", opRunMicrotasks),
+    op("op_dispatch_exception", opDispatchException),
     op("op_get_extras_binding_object", opGetExtrasBindingObject),
     op("op_get_ext_import_meta_proto", opGetExtImportMetaProto),
     op("op_set_captured_bootstrap", opSetCapturedBootstrap),
@@ -43,4 +49,31 @@ fn opSetCapturedBootstrap(scope: Scope, value: *const v8.Value) void {
 fn opStrByteLength(scope: Scope, value: *const v8.Value) u32 {
     if (!c.v8__Value__IsString(value)) return 0;
     return @intCast(c.v8__String__Utf8Length(@ptrCast(value), scope.isolate));
+}
+
+fn opTimerNow(scope: Scope) f64 {
+    return scope.runtime.timers.now(scope.runtime.io);
+}
+
+fn opTimerSchedule(scope: Scope, delay_ms: f64) void {
+    scope.runtime.timers.schedule(scope.runtime.io, delay_ms);
+}
+
+fn opTimerTrack(scope: Scope, id: i32, repeat: bool, system: bool) !void {
+    try scope.runtime.timers.active.put(scope.runtime.gpa, id, .{ .repeat = repeat, .system = system });
+}
+
+fn opTimerUntrack(scope: Scope, id: i32) void {
+    _ = scope.runtime.timers.active.remove(id);
+}
+
+fn opRunMicrotasks(scope: Scope) void {
+    c.v8__Isolate__PerformMicrotaskCheckpoint(scope.isolate);
+}
+
+/// Fatal callback errors are recorded rather than thrown back into JS's
+/// reporting path. The event loop reports them once dispatch returns.
+fn opDispatchException(scope: Scope, exception: *const v8.Value, _: bool) void {
+    if (scope.runtime.dispatched_exception) |old| old.deinit();
+    scope.runtime.dispatched_exception = .init(scope.isolate, exception);
 }
