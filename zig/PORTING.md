@@ -133,5 +133,12 @@ have no V8 for now.
   coexist, a bounded 1 ms wait bridges the default platform's lack of a timed
   pump; a custom task runner and unified I/O wakeup remain to be ported.
 
-Next in phase 3: async ops, resources and unified I/O/platform wakeups, then
-remaining built-in ops.
+- **Resource table:** typed and erased retained handles, monotonically
+  increasing resource IDs, take/replace, explicit close and cancellation
+  hooks, and final destruction. `Deno.core.resources`, `close`, `tryClose`
+  and `cancelRead` use the native table. Missing IDs throw the registered
+  `BadResource` class. Resource-backed I/O ops and runtime stdio registration
+  are still to be ported.
+
+Next in phase 3: async ops, resource-backed I/O and unified I/O/platform
+wakeups, then remaining built-in ops.

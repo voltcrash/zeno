@@ -294,3 +294,5 @@ pub extern fn v8__Uint8Array__New(buffer: *const ArrayBuffer, byte_offset: usize
 pub extern fn v8__Isolate__HasPendingBackgroundTasks(isolate: *Isolate) bool;
 pub const Int32Array = opaque {};
 pub extern fn v8__Int32Array__New(buffer: *const ArrayBuffer, byte_offset: usize, length: usize) ?*const Int32Array;
+
+pub extern fn v8__Array__New_with_elements(isolate: *Isolate, elements: [*]const *const Value, length: usize) *const Array;

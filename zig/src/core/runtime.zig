@@ -30,6 +30,7 @@ pub const JsRuntime = struct {
     /// The bootstrap object captured by `01_core.js`.
     captured_bootstrap: ?v8.Global(v8.Value) = null,
     modules: modules.ModuleMap,
+    resources: @import("resources.zig").ResourceTable,
     timers: @import("timers.zig").Timers,
     process_timers: ?v8.Global(v8.c.Function) = null,
     dispatched_exception: ?v8.Global(v8.Value) = null,
@@ -62,6 +63,7 @@ pub const JsRuntime = struct {
             .io = io,
             .ext_import_meta_proto = undefined,
             .modules = .init(gpa),
+            .resources = .init(gpa),
             .timers = .init(io),
         };
         const iso = self.owned.isolate;
@@ -89,6 +91,7 @@ pub const JsRuntime = struct {
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        self.resources.deinit();
         self.exceptions.deinit(gpa);
         if (self.tick_buffer) |b| b.deinit();
         if (self.immediate_buffer) |b| b.deinit();
@@ -964,4 +967,128 @@ test "V8 background compilation settles awaited WebAssembly promises" {
         \\await WebAssembly.compile(new Uint8Array([1, 2, 3]));
     , &exception));
     try std.testing.expect(std.mem.startsWith(u8, exception.?, "CompileError:"));
+}
+
+test "resource close preserves retained native file ownership" {
+    v8.initForTesting();
+    const resources = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "retained.txt", .data = "retained" });
+    const FileResource = struct {
+        file: std.Io.File,
+        io: std.Io,
+        closes: *usize,
+        drops: *usize,
+        pub fn name(_: *const @This()) []const u8 {
+            return "testFile";
+        }
+        pub fn close(self: *@This()) void {
+            self.closes.* += 1;
+        }
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.file.close(self.io);
+            self.drops.* += 1;
+        }
+    };
+    var closes: usize = 0;
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{});
+    defer rt.destroy(gpa);
+    const file = try tmp.dir.openFile(io, "retained.txt", .{});
+    const rid = try rt.resources.add(try resources.Resource.create(gpa, FileResource, .{ .file = file, .io = io, .closes = &closes, .drops = &drops }));
+    try std.testing.expectEqual(@as(u32, 0), rid);
+    var held: ?resources.ResourceRef(FileResource) = try rt.resources.get(FileResource, rid);
+    defer if (held) |r| r.deinit();
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    _ = try rt.executeScript(gpa, "resources.js",
+        \\const c = Deno.core;
+        \\if (c.resources()[0] !== 'testFile') throw new Error('resource name');
+        \\c.cancelRead(0); // default hook leaves this file intact
+        \\c.tryClose(999); c.cancelRead(999);
+        \\c.close(0);
+        \\if (Object.keys(c.resources()).length !== 0) throw new Error('resource remained');
+        \\c.tryClose(0);
+        \\try { c.close(0); throw new Error('missing resource accepted'); }
+        \\catch (e) {
+        \\  if (!(e instanceof c.BadResource) || e.name !== 'BadResource' || e.message !== 'Bad resource ID') throw e;
+        \\}
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 1), closes);
+    try std.testing.expectEqual(@as(usize, 0), drops);
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 8), try held.?.ptr().file.readPositionalAll(io, &buf, 0));
+    try std.testing.expectEqualStrings("retained", &buf);
+    held.?.deinit();
+    held = null;
+    try std.testing.expectEqual(@as(usize, 1), drops);
+}
+
+test "resource close hooks can re-enter the resource table" {
+    v8.initForTesting();
+    const resources = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var removed_before_close = false;
+    var cancellations: usize = 0;
+    const ReentrantResource = struct {
+        table: *resources.ResourceTable,
+        removed: *bool,
+        cancellations: *usize,
+        const Replacement = struct {
+            pub fn name(_: *const @This()) []const u8 {
+                return "replacement";
+            }
+        };
+        pub fn close(self: *@This()) void {
+            self.removed.* = !self.table.has(0);
+            _ = self.table.add(resources.Resource.create(self.table.gpa, Replacement, .{}) catch unreachable) catch unreachable;
+        }
+        pub fn cancelReadOps(self: *@This()) void {
+            self.cancellations.* += 1;
+        }
+    };
+    _ = try rt.resources.add(try resources.Resource.create(gpa, ReentrantResource, .{ .table = &rt.resources, .removed = &removed_before_close, .cancellations = &cancellations }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///resource-hooks.js",
+        \\import { op_cancel_read, op_close, op_resources } from 'ext:core/ops';
+        \\op_cancel_read(0);
+        \\if (op_resources().length !== 1) throw new Error('cancel removed resource');
+        \\op_close(0);
+        \\if (Deno.core.resources()[1] !== 'replacement') throw new Error('reentrant add failed');
+        \\Deno.core.tryClose(1);
+    , &exception);
+    try std.testing.expect(removed_before_close);
+    try std.testing.expectEqual(@as(usize, 1), cancellations);
+    try std.testing.expectEqual(@as(usize, 0), rt.resources.len());
+}
+
+test "resource snapshots preserve Rust's RID ordering through replacement" {
+    v8.initForTesting();
+    const resources = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    const Named = struct {
+        label: []const u8,
+        pub fn name(self: *const @This()) []const u8 {
+            return self.label;
+        }
+    };
+    for (0..8) |_| _ = try rt.resources.add(try resources.Resource.create(gpa, Named, .{ .label = "original" }));
+    (try rt.resources.takeAny(1)).deinit();
+    try rt.resources.replace(2, try resources.Resource.create(gpa, Named, .{ .label = "replacement" }));
+    _ = try rt.resources.add(try resources.Resource.create(gpa, Named, .{ .label = "last" }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    _ = try rt.executeScript(gpa, "resource-order.js",
+        \\const rows = Deno.core.ops.op_resources();
+        \\if (rows.map(row => row[0]).join() !== '0,2,3,4,5,6,7,8') throw new Error('RID order');
+        \\if (Deno.core.resources()[2] !== 'replacement') throw new Error('replacement name');
+    , &exception);
 }

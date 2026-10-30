@@ -129,6 +129,26 @@ fn throwError(scope: Scope, err: anyerror) void {
     _ = c.v8__Isolate__ThrowException(scope.isolate, c.v8__Exception__Error(message));
 }
 
+/// Build a registered JS error class through core's captured, trusted
+/// builder, preserving its prototype and message (e.g. BadResource).
+pub fn throwCustomError(scope: Scope, class_name: []const u8, message: []const u8) ConvertError!void {
+    const bootstrap = scope.runtime.captured_bootstrap orelse {
+        // During bootstrap the registered constructors may not exist yet.
+        const err = c.v8__Exception__Error(try v8.newString(scope.isolate, message));
+        try v8.setProperty(scope.isolate, scope.context, @ptrCast(err), "name", @ptrCast(try v8.newString(scope.isolate, class_name)));
+        _ = c.v8__Isolate__ThrowException(scope.isolate, err);
+        return;
+    };
+    const core = try v8.getProperty(scope.isolate, scope.context, @ptrCast(bootstrap.get(scope.isolate)), "core");
+    const builder = try v8.getProperty(scope.isolate, scope.context, @ptrCast(core), "buildCustomError");
+    const args = [_]*const v8.Value{
+        @ptrCast(try v8.newString(scope.isolate, class_name)),
+        @ptrCast(try v8.newString(scope.isolate, message)),
+    };
+    const err = c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), 2, &args) orelse return error.JsException;
+    _ = c.v8__Isolate__ThrowException(scope.isolate, err);
+}
+
 /// Install `ops` on `Deno.core.ops`.
 pub fn install(scope: Scope, target: *const v8.Object, ops: []const OpDecl) v8.Error!void {
     for (ops) |decl| {
