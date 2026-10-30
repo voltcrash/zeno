@@ -44,7 +44,7 @@ pub fn runMainModule(gpa: std.mem.Allocator, io: std.Io, specifier: []const u8, 
     defer if (exception) |e| gpa.free(e);
     rt.executeMainModule(gpa, specifier, source, &exception) catch |e| switch (e) {
         error.JsException => {
-            try err.print("error: Uncaught {s}\n", .{exception orelse "exception"});
+            try err.print("error: Uncaught {s}{s}\n", .{ if (rt.exception_is_promise) "(in promise) " else "", exception orelse "exception" });
             return 1;
         },
         error.ModuleLoadFailed => {

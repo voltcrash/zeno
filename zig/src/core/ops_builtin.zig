@@ -19,6 +19,8 @@ pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_timer_untrack", opTimerUntrack),
     op("op_run_microtasks", opRunMicrotasks),
     op("op_dispatch_exception", opDispatchException),
+    op("op_drain_pending_rejections", opDrainPendingRejections),
+    op("op_set_handled_promise_rejection_handler", opSetHandledPromiseRejectionHandler),
     op("op_get_extras_binding_object", opGetExtrasBindingObject),
     op("op_get_ext_import_meta_proto", opGetExtImportMetaProto),
     op("op_set_captured_bootstrap", opSetCapturedBootstrap),
@@ -73,7 +75,23 @@ fn opRunMicrotasks(scope: Scope) void {
 
 /// Fatal callback errors are recorded rather than thrown back into JS's
 /// reporting path. The event loop reports them once dispatch returns.
-fn opDispatchException(scope: Scope, exception: *const v8.Value, _: bool) void {
+fn opDispatchException(scope: Scope, exception: *const v8.Value, is_promise: bool) void {
     if (scope.runtime.dispatched_exception) |old| old.deinit();
     scope.runtime.dispatched_exception = .init(scope.isolate, exception);
+    scope.runtime.exception_is_promise = is_promise;
+}
+
+fn opDrainPendingRejections(scope: Scope) !*const v8.Value {
+    return scope.runtime.exceptions.drainPending(scope.runtime);
+}
+
+fn opSetHandledPromiseRejectionHandler(scope: Scope, value: *const v8.Value) !void {
+    if (!c.v8__Value__IsNullOrUndefined(value) and !c.v8__Value__IsFunction(value)) {
+        const message = try v8.newString(scope.isolate, "expected Function");
+        _ = c.v8__Isolate__ThrowException(scope.isolate, c.v8__Exception__TypeError(message));
+        return;
+    }
+    const state = &scope.runtime.exceptions;
+    if (state.handled_handler) |old| old.deinit();
+    state.handled_handler = if (c.v8__Value__IsFunction(value)) .init(scope.isolate, @ptrCast(value)) else null;
 }

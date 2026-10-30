@@ -151,6 +151,13 @@ pub const ModuleMap = struct {
             return error.JsException;
         }
         const result = c.v8__Module__Evaluate(module, ctx) orelse return error.JsException;
+        if (c.v8__Value__IsPromise(result)) {
+            // The embedder observes this promise directly. It must not also
+            // produce a user-facing unhandled rejection notification.
+            const promise: *const c.Promise = @ptrCast(result);
+            c.v8__Promise__MarkAsHandled(promise);
+            _ = rt.exceptions.removePending(rt.isolate(), promise);
+        }
         try rt.runEventLoop(if (c.v8__Value__IsPromise(result)) @ptrCast(result) else null, exception);
         if (c.v8__Module__GetStatus(module) == .errored) {
             exception.* = c.v8__Module__GetException(module);

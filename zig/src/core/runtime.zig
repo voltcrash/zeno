@@ -33,6 +33,11 @@ pub const JsRuntime = struct {
     timers: @import("timers.zig").Timers,
     process_timers: ?v8.Global(v8.c.Function) = null,
     dispatched_exception: ?v8.Global(v8.Value) = null,
+    exception_is_promise: bool = false,
+    exceptions: @import("exceptions.zig").ExceptionState = .{},
+    tick_buffer: ?v8.Global(v8.c.ArrayBuffer) = null,
+    tick_info: ?*[2]u8 = null,
+    drain_ticks: ?v8.Global(v8.c.Function) = null,
 
     pub const CreateError = error{ OutOfMemory, JsException, CoreBootstrapFailed };
 
@@ -72,7 +77,6 @@ pub const JsRuntime = struct {
         var exception: ?[]u8 = null;
         defer if (exception) |e| gpa.free(e);
         const callback = try self.executeScript(gpa, "ext:core/timer_setup.js",
-            \\Deno.core.__setTickInfo(new Uint8Array(2));
             \\Deno.core.__setTimerInfo(new Int32Array(1));
             \\Deno.core.__processTimers
         , &exception);
@@ -81,6 +85,9 @@ pub const JsRuntime = struct {
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        self.exceptions.deinit(gpa);
+        if (self.tick_buffer) |b| b.deinit();
+        if (self.drain_ticks) |f| f.deinit();
         if (self.process_timers) |f| f.deinit();
         if (self.dispatched_exception) |e| e.deinit();
         self.timers.active.deinit(gpa);
@@ -116,6 +123,16 @@ pub const JsRuntime = struct {
         try ops.install(scope, core_ops, &ops_builtin.all);
         try ops.install(scope, core_ops, extra_ops);
         inline for (builtin_sources) |name| try self.runCoreSource(name);
+
+        const buffer = v8.c.v8__ArrayBuffer__New__with_byte_length(iso, 2);
+        self.tick_buffer = .init(iso, buffer);
+        self.tick_info = @ptrCast(@alignCast(v8.c.v8__ArrayBuffer__Data(buffer).?));
+        self.tick_info.?.* = .{ 0, 0 };
+        const view = v8.c.v8__Uint8Array__New(buffer, 0, 2) orelse return error.OutOfMemory;
+        const setter = try v8.getProperty(iso, ctx, core, "__setTickInfo");
+        _ = v8.c.v8__Function__Call(@ptrCast(setter), ctx, @ptrCast(v8.c.v8__Undefined(iso)), 1, &.{@ptrCast(view)}) orelse return error.JsException;
+        self.drain_ticks = .init(iso, @ptrCast(try v8.getProperty(iso, ctx, core, "__drainNextTickAndMacrotasks")));
+        v8.c.v8__Isolate__SetPromiseRejectCallback(iso, @import("exceptions.zig").ExceptionState.promiseRejectCallback);
 
         // `ext:core/ops` exports every op.
         var exports: std.ArrayList(modules.Source.Export) = .empty;
@@ -224,12 +241,18 @@ pub const JsRuntime = struct {
     }
 
     /// Drive the JS timer queue until no referenced wakeup remains. Async
-    /// I/O, nextTicks, immediates and platform tasks are added separately.
+    /// I/O, immediates and platform tasks are added separately.
     pub fn runEventLoop(self: *JsRuntime, main_promise: ?*const v8.c.Promise, thrown: *?*const v8.Value) v8.Error!void {
         const c = v8.c;
         const iso = self.isolate();
+        const drain = if (self.drain_ticks) |f| f.get(iso) else null;
         while (true) {
-            c.v8__Isolate__PerformMicrotaskCheckpoint(iso);
+            try self.exceptions.dispatchHandled(self);
+            if (drain) |f| {
+                _ = c.v8__Function__Call(f, self.context, @ptrCast(c.v8__Undefined(iso)), 0, &.{}) orelse return error.JsException;
+            } else {
+                c.v8__Isolate__PerformMicrotaskCheckpoint(iso);
+            }
             if (self.dispatched_exception) |e| {
                 thrown.* = e.get(iso);
                 e.deinit();
@@ -239,10 +262,12 @@ pub const JsRuntime = struct {
             if (main_promise) |promise| {
                 if (c.v8__Promise__State(promise) == .rejected) {
                     c.v8__Promise__MarkAsHandled(promise);
+                    self.exception_is_promise = true;
                     thrown.* = c.v8__Promise__Result(promise);
                     return error.JsException;
                 }
             }
+            if (self.exceptions.pending.items.len != 0 or self.exceptions.handled.items.len != 0) continue;
             if (!self.timers.refed or self.timers.deadline_ms == null) return;
             self.timers.wait(self.io);
             // Keep handles created by each iteration bounded, including when
@@ -610,4 +635,132 @@ test "microtasks run between callbacks in the same timer bucket" {
     defer gpa.free(text);
     try std.testing.expectEqualStrings("first,microtask,second", text);
     try std.testing.expectEqual(@as(usize, 0), rt.timers.active.count());
+}
+
+test "nextTicks drain before promises and between timer callbacks" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///ticks.js",
+        \\const c = Deno.core;
+        \\globalThis.events = [];
+        \\const tick = (fn, args) => c.queueNextTick({callback: fn, args, snapshot: c.getAsyncContext()});
+        \\tick((a, b) => { events.push(a+b); tick(() => events.push('nested')); }, ['tick', '1']);
+        \\Promise.resolve().then(() => { events.push('promise'); tick(() => events.push('promise-tick')); });
+        \\c.createTimer(() => {
+        \\  events.push('timer1');
+        \\  tick(() => events.push('timer-tick'));
+        \\  Promise.resolve().then(() => events.push('timer-promise'));
+        \\}, 1, undefined, false, true, false);
+        \\c.createTimer(() => events.push('timer2'), 1, undefined, false, true, false);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    const result = try rt.executeScript(gpa, "test.js", "events.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("tick1,nested,promise,promise-tick,timer1,timer-tick,timer-promise,timer2", text);
+}
+
+test "unhandled rejections and tick errors reach the runtime" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const sources = [_][]const u8{
+        "Promise.reject(new TypeError('unhandled'))",
+        "Promise.reject(undefined)",
+        "Deno.core.queueNextTick({callback() { throw new Error('tick boom'); }})",
+        "Deno.core.createTimer(() => Promise.reject('timer rejection'), 1, undefined, false, true, false)",
+    };
+    for (sources, [_][]const u8{ "TypeError: unhandled", "undefined", "Error: tick boom", "timer rejection" }, [_]bool{ true, true, false, true }) |source, expected, is_promise| {
+        const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+        defer rt.destroy(gpa);
+        var exception: ?[]u8 = null;
+        defer if (exception) |e| gpa.free(e);
+        try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///unhandled.js", source, &exception));
+        try std.testing.expect(std.mem.startsWith(u8, exception.?, expected));
+        try std.testing.expectEqual(is_promise, rt.exception_is_promise);
+    }
+}
+
+test "handlers attached before yielding suppress unhandled rejections" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///handled.js",
+        \\const c = Deno.core;
+        \\c.setUnhandledPromiseRejectionHandler(() => { throw new Error('unexpected unhandled'); });
+        \\c.setHandledPromiseRejectionHandler(() => { throw new Error('unexpected late handler'); });
+        \\try {
+        \\  c.setHandledPromiseRejectionHandler(1);
+        \\  throw new Error('invalid handler accepted');
+        \\} catch (e) {
+        \\  if (!(e instanceof TypeError) || e.message !== 'expected Function') throw e;
+        \\}
+        \\Promise.reject('sync').catch(() => {});
+        \\const p = Promise.reject('microtask');
+        \\queueMicrotask(() => p.catch(() => {}));
+        \\const q = Promise.reject('tick');
+        \\c.queueNextTick({callback() { q.catch(() => {}); }});
+        \\new Promise((resolve, reject) => { resolve(); reject('already resolved'); });
+        \\await Promise.reject('caught await').catch(() => {});
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 0), rt.exceptions.pending.items.len);
+}
+
+test "rejections restore async context and notify late handlers once" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///rejection-handlers.js",
+        \\const c = Deno.core;
+        \\globalThis.rejections = [];
+        \\const ctx = { value: 42 };
+        \\c.setHandledPromiseRejectionHandler((promise, reason) => {
+        \\  if (reason !== 'late') throw new Error('wrong reason');
+        \\  rejections.push('handled');
+        \\});
+        \\c.setUnhandledPromiseRejectionHandler((promise, reason) => {
+        \\  if (c.getAsyncContext() !== ctx) throw new Error('lost context');
+        \\  rejections.push(reason);
+        \\  c.createTimer(() => promise.catch(() => {}), 1, undefined, false, true, false);
+        \\  return true;
+        \\});
+        \\c.setAsyncContext(ctx);
+        \\Promise.reject('late');
+        \\c.setAsyncContext(undefined);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    const result = try rt.executeScript(gpa, "test.js", "rejections.join()", &exception);
+    const text = try v8.toUtf8(gpa, rt.isolate(), rt.context, result);
+    defer gpa.free(text);
+    try std.testing.expectEqualStrings("late,handled", text);
+    try std.testing.expectEqual(@as(usize, 0), rt.exceptions.pending.items.len);
+    try std.testing.expectEqual(@as(usize, 0), rt.exceptions.handled.items.len);
+}
+
+test "main module rejection is observed once without a user rejection event" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///main-rejection.js",
+        \\Deno.core.setUnhandledPromiseRejectionHandler(() => { throw new Error('duplicate event'); });
+        \\await Promise.resolve();
+        \\throw new Error('main rejection');
+    , &exception));
+    try std.testing.expect(std.mem.startsWith(u8, exception.?, "Error: main rejection"));
 }

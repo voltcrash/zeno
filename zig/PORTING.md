@@ -117,8 +117,13 @@ have no V8 for now.
   wakeup. Module evaluation drives timers and explicit microtask checkpoints;
   top-level await can settle via a timer. Callback errors reach the CLI.
   Public `setTimeout`/`setInterval` await the web extension. Async I/O,
-  nextTick/immediate queues, general unhandled promise rejection tracking and
-  V8 platform tasks are not wired yet.
+  immediate queues and V8 platform tasks are not wired yet.
+- **Ticks and rejections:** core nextTicks drain before promise continuations
+  and between timer callbacks. V8 rejection notifications are tracked until
+  handlers are attached or core reports them; handlers see the rejection's
+  async context, and late-handler notifications are delivered. Main-module
+  promises are observed by the embedder without duplicate rejection events.
+  The CLI distinguishes fatal promise rejections with `(in promise)`.
 
-Next in phase 3: nextTick/immediate queues, promise rejection tracking, async
-ops and platform tasks, then the remaining built-in ops.
+Next in phase 3: immediate queues, async ops and platform tasks, then the
+remaining built-in ops.
