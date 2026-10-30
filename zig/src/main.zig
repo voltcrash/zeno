@@ -80,6 +80,7 @@ fn notPorted(err: *std.Io.Writer, name: []const u8) !u8 {
 test {
     std.testing.refAllDecls(@This());
     _ = flags;
+    _ = @import("core/resources.zig");
     _ = @import("cli/parse.zig");
     if (build_options.have_v8) {
         _ = @import("core/runtime.zig");
