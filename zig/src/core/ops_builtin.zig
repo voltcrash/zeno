@@ -9,10 +9,18 @@ const c = v8.c;
 const ops = @import("ops.zig");
 const op = ops.op;
 const Scope = ops.Scope;
+const async_ops = @import("async_ops.zig");
 
 pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_str_byte_length", opStrByteLength),
     op("op_print", opPrint),
+    async_ops.decl("op_add_async", opAddAsync, .{ .execution = .inline_ready }),
+    async_ops.decl("op_void_async", opVoidAsync, .{ .execution = .inline_ready }),
+    async_ops.decl("op_error_async", opErrorAsync, .{ .execution = .inline_ready }),
+    async_ops.decl("op_void_async_deferred", opVoidAsync, .{ .execution = .inline_ready, .scheduling = .deferred }),
+    async_ops.decl("op_error_async_deferred", opErrorAsync, .{ .execution = .inline_ready, .scheduling = .deferred }),
+    op("op_ref_op", opRefOp),
+    op("op_unref_op", opUnrefOp),
     op("op_resources", opResources),
     op("op_close", opClose),
     op("op_try_close", opTryClose),
@@ -149,4 +157,19 @@ fn opCancelRead(scope: Scope, rid: u32) void {
     const resource = scope.runtime.resources.getAny(rid) catch return;
     defer resource.deinit();
     resource.cancelReadOps();
+}
+
+fn opAddAsync(a: i32, b: i32) i32 {
+    // Match Rust release arithmetic without Zig fast-mode overflow UB.
+    return a +% b;
+}
+fn opVoidAsync() void {}
+fn opErrorAsync() error{@"error"}!void {
+    return error.@"error";
+}
+fn opRefOp(scope: Scope, id: i32) void {
+    scope.runtime.async_driver.setRef(id, true);
+}
+fn opUnrefOp(scope: Scope, id: i32) void {
+    scope.runtime.async_driver.setRef(id, false);
 }
