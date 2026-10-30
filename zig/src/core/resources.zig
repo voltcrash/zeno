@@ -2,7 +2,7 @@
 //! Resource identity and ownership from `libs/core/io/resource_table.rs`.
 //! Handles are reference counted on the runtime thread, like Rust's Rc.
 //! Closing a rid removes table ownership; outstanding operation handles can
-//! retain the value until their work finishes. I/O methods follow with ops.
+//! retain the value until their work finishes.
 const std = @import("std");
 
 pub const ResourceId = u32;
@@ -14,6 +14,12 @@ const VTable = struct {
     name: *const fn (*Header) []const u8,
     close: *const fn (*Header) void,
     cancel_read: *const fn (*Header) void,
+    read: *const fn (*Header, std.Io, []u8) anyerror!usize,
+    write: *const fn (*Header, std.Io, []const u8) anyerror!usize,
+    read_sync: *const fn (*Header, std.Io, []u8) anyerror!usize,
+    write_sync: *const fn (*Header, std.Io, []const u8) anyerror!usize,
+    write_all: *const fn (*Header, std.Io, []const u8) anyerror!void,
+    shutdown: *const fn (*Header, std.Io) anyerror!void,
     destroy: *const fn (*Header) void,
 };
 const Header = struct {
@@ -25,7 +31,11 @@ const Header = struct {
 /// An owning erased handle. Copies require `clone`; each owner calls `deinit`.
 /// T may provide name(*const T), close(*T), cancelReadOps(*T), and
 /// deinit(*T, Allocator). Only final release invokes deinit; close is explicit.
+/// Optional I/O methods take (*T, std.Io, buffer) and return !usize:
+/// read/readSync use []u8, write/writeSync use []const u8. writeAll takes
+/// []const u8 and returns !void; shutdown takes (*T, std.Io) and returns !void.
 pub const Resource = struct {
+    pub const ResourceType = void;
     header: *Header,
 
     /// Ownership of value transfers on success; on failure it stays with the caller.
@@ -57,6 +67,29 @@ pub const Resource = struct {
 
     pub fn cancelReadOps(self: Resource) void {
         self.header.vtable.cancel_read(self.header);
+    }
+
+    /// Native I/O bodies borrow this handle and its buffers. Async methods
+    /// run on workers and must synchronize their own state; refcounts and
+    /// close hooks remain on the runtime thread. Use cancellable std.Io
+    /// waits/locks so runtime shutdown can join blocked operations.
+    pub fn read(self: Resource, io: std.Io, data: []u8) !usize {
+        return self.header.vtable.read(self.header, io, data);
+    }
+    pub fn write(self: Resource, io: std.Io, data: []const u8) !usize {
+        return self.header.vtable.write(self.header, io, data);
+    }
+    pub fn readSync(self: Resource, io: std.Io, data: []u8) !usize {
+        return self.header.vtable.read_sync(self.header, io, data);
+    }
+    pub fn writeSync(self: Resource, io: std.Io, data: []const u8) !usize {
+        return self.header.vtable.write_sync(self.header, io, data);
+    }
+    pub fn writeAll(self: Resource, io: std.Io, data: []const u8) !void {
+        return self.header.vtable.write_all(self.header, io, data);
+    }
+    pub fn shutdown(self: Resource, io: std.Io) !void {
+        return self.header.vtable.shutdown(self.header, io);
     }
 
     pub fn downcast(self: Resource, comptime T: type) LookupError!ResourceRef(T) {
@@ -96,6 +129,12 @@ fn Impl(comptime T: type) type {
             .name = name,
             .close = close,
             .cancel_read = cancelRead,
+            .read = read,
+            .write = write,
+            .read_sync = readSync,
+            .write_sync = writeSync,
+            .write_all = writeAll,
+            .shutdown = shutdown,
             .destroy = destroy,
         };
 
@@ -113,6 +152,36 @@ fn Impl(comptime T: type) type {
         }
         fn cancelRead(h: *Header) void {
             if (@hasDecl(T, "cancelReadOps")) node(h).value.cancelReadOps();
+        }
+        fn read(h: *Header, io: std.Io, data: []u8) !usize {
+            if (@hasDecl(T, "read")) return node(h).value.read(io, data);
+            return error.NotSupported;
+        }
+        fn write(h: *Header, io: std.Io, data: []const u8) !usize {
+            if (@hasDecl(T, "write")) return node(h).value.write(io, data);
+            return error.NotSupported;
+        }
+        fn readSync(h: *Header, io: std.Io, data: []u8) !usize {
+            if (@hasDecl(T, "readSync")) return node(h).value.readSync(io, data);
+            return error.NotSupported;
+        }
+        fn writeSync(h: *Header, io: std.Io, data: []const u8) !usize {
+            if (@hasDecl(T, "writeSync")) return node(h).value.writeSync(io, data);
+            return error.NotSupported;
+        }
+        fn writeAll(h: *Header, io: std.Io, data: []const u8) !void {
+            if (@hasDecl(T, "writeAll")) return node(h).value.writeAll(io, data);
+            var offset: usize = 0;
+            while (offset < data.len) {
+                const n = try write(h, io, data[offset..]);
+                if (n == 0) return error.WriteZero;
+                if (n > data.len - offset) return error.InvalidWriteCount;
+                offset += n;
+            }
+        }
+        fn shutdown(h: *Header, io: std.Io) !void {
+            if (@hasDecl(T, "shutdown")) return node(h).value.shutdown(io);
+            return error.NotSupported;
         }
         fn destroy(h: *Header) void {
             const n = node(h);
@@ -191,6 +260,71 @@ pub const ResourceTable = struct {
 };
 
 const TestCounts = struct { closes: usize = 0, cancels: usize = 0, drops: usize = 0 };
+
+test "I/O defaults and partial write-all follow resource contracts" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const empty = try Resource.create(gpa, struct {}, .{});
+    defer empty.deinit();
+    var data: [8]u8 = undefined;
+    try std.testing.expectError(error.NotSupported, empty.read(io, &data));
+    try std.testing.expectError(error.NotSupported, empty.readSync(io, &data));
+    try std.testing.expectError(error.NotSupported, empty.write(io, "x"));
+    try std.testing.expectError(error.NotSupported, empty.writeSync(io, "x"));
+    try std.testing.expectError(error.NotSupported, empty.shutdown(io));
+    try empty.writeAll(io, "");
+
+    const Partial = struct {
+        output: [8]u8 = undefined,
+        len: usize = 0,
+        calls: usize = 0,
+        pub fn write(self: *@This(), _: std.Io, bytes: []const u8) !usize {
+            const n = @min(bytes.len, 2);
+            @memcpy(self.output[self.len..][0..n], bytes[0..n]);
+            self.len += n;
+            self.calls += 1;
+            return n;
+        }
+    };
+    const writer = try Resource.create(gpa, Partial, .{});
+    defer writer.deinit();
+    try writer.writeAll(io, "partial");
+    const held = try writer.downcast(Partial);
+    defer held.deinit();
+    try std.testing.expectEqualStrings("partial", held.ptr().output[0..held.ptr().len]);
+    try std.testing.expectEqual(@as(usize, 4), held.ptr().calls);
+    // Providing async write does not silently implement synchronous write.
+    try std.testing.expectError(error.NotSupported, writer.writeSync(io, "x"));
+}
+
+test "write-all handles zero progress, native errors and overrides" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const Zero = struct {
+        pub fn write(_: *@This(), _: std.Io, _: []const u8) !usize {
+            return 0;
+        }
+    };
+    const zero = try Resource.create(gpa, Zero, .{});
+    defer zero.deinit();
+    try std.testing.expectError(error.WriteZero, zero.writeAll(io, "x"));
+    const Failure = struct {
+        pub fn write(_: *@This(), _: std.Io, _: []const u8) !usize {
+            return error.BrokenPipe;
+        }
+    };
+    const failure = try Resource.create(gpa, Failure, .{});
+    defer failure.deinit();
+    try std.testing.expectError(error.BrokenPipe, failure.writeAll(io, "x"));
+    const Override = struct {
+        pub fn writeAll(_: *@This(), _: std.Io, bytes: []const u8) !void {
+            if (!std.mem.eql(u8, bytes, "optimized")) return error.WrongBuffer;
+        }
+    };
+    const optimized = try Resource.create(gpa, Override, .{});
+    defer optimized.deinit();
+    try optimized.writeAll(io, "optimized");
+}
 const TestResource = struct {
     counts: *TestCounts,
     value: u32,

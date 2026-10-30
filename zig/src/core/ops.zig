@@ -9,7 +9,7 @@
 //! - Parameters: an optional leading `Scope`, then `bool`, `i32`, `u32`,
 //!   `f64`, `[]const u8` (the argument converted with `String()`, valid
 //!   during the call) or
-//!   `*const v8.Value`, a retained buffer, or `ResourceRef(T)`. Managed
+//!   `*const v8.Value`, a retained buffer, `Resource` or `ResourceRef(T)`. Managed
 //!   arguments are borrowed by the function and released by the binding.
 //! - Return types: `void`, `bool`, `i32`, `u32`, `f64`, `[]const u8` (copied
 //!   into a JS string) or `*const v8.Value`, optionally as an error union. An
@@ -100,7 +100,8 @@ pub fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertErr
     if (comptime isBuffer(T)) return T.fromV8(scope, value);
     if (comptime isResource(T)) {
         const rid = try fromV8(u32, scope, value);
-        return scope.runtime.resources.get(T.ResourceType, rid) catch {
+        const result = if (T.ResourceType == void) scope.runtime.resources.getAny(rid) else scope.runtime.resources.get(T.ResourceType, rid);
+        return result catch {
             try throwCustomError(scope, "BadResource", "Bad resource ID");
             return error.JsException;
         };
@@ -156,22 +157,31 @@ pub fn releaseArg(comptime T: type, value: T) void {
 }
 
 /// Throw a Zig error into JS. `error.JsException` means an exception is
-/// already pending; other errors become a JS error named after them.
+/// already pending. Known resource errors use registered classes; other
+/// errors become a JS Error whose message is the Zig error name.
 pub fn throwError(scope: Scope, err: anyerror) void {
     if (err == error.JsException) return;
-    const message = v8.newString(scope.isolate, @errorName(err)) catch return;
-    _ = c.v8__Isolate__ThrowException(scope.isolate, c.v8__Exception__Error(message));
+    const value = errorValue(scope, err) catch return;
+    _ = c.v8__Isolate__ThrowException(scope.isolate, value);
+}
+
+pub fn errorValue(scope: Scope, err: anyerror) ConvertError!*const v8.Value {
+    if (err == error.NotSupported) return customError(scope, "NotSupported", "The operation is not supported");
+    return c.v8__Exception__Error(try v8.newString(scope.isolate, @errorName(err)));
 }
 
 /// Build a registered JS error class through core's captured, trusted
 /// builder, preserving its prototype and message (e.g. BadResource).
 pub fn throwCustomError(scope: Scope, class_name: []const u8, message: []const u8) ConvertError!void {
+    _ = c.v8__Isolate__ThrowException(scope.isolate, try customError(scope, class_name, message));
+}
+
+pub fn customError(scope: Scope, class_name: []const u8, message: []const u8) ConvertError!*const v8.Value {
     const bootstrap = scope.runtime.captured_bootstrap orelse {
         // During bootstrap the registered constructors may not exist yet.
         const err = c.v8__Exception__Error(try v8.newString(scope.isolate, message));
         try v8.setProperty(scope.isolate, scope.context, @ptrCast(err), "name", @ptrCast(try v8.newString(scope.isolate, class_name)));
-        _ = c.v8__Isolate__ThrowException(scope.isolate, err);
-        return;
+        return err;
     };
     const core = try v8.getProperty(scope.isolate, scope.context, @ptrCast(bootstrap.get(scope.isolate)), "core");
     const builder = try v8.getProperty(scope.isolate, scope.context, @ptrCast(core), "buildCustomError");
@@ -179,8 +189,7 @@ pub fn throwCustomError(scope: Scope, class_name: []const u8, message: []const u
         @ptrCast(try v8.newString(scope.isolate, class_name)),
         @ptrCast(try v8.newString(scope.isolate, message)),
     };
-    const err = c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), 2, &args) orelse return error.JsException;
-    _ = c.v8__Isolate__ThrowException(scope.isolate, err);
+    return c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), 2, &args) orelse error.JsException;
 }
 
 /// Install `ops` on `Deno.core.ops`.
