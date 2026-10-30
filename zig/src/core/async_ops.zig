@@ -29,6 +29,7 @@ const Job = struct {
     start_error: ?anyerror = null,
     future: ?std.Io.Future(void) = null,
     run: *const fn (*Job) void,
+    complete: *const fn (*Job) void,
     map: *const fn (*Job, *JsRuntime) v8.Error!Mapped,
     destroy: *const fn (*Job) void,
 };
@@ -135,6 +136,7 @@ pub const Driver = struct {
             var scope: v8.HandleScope = undefined;
             scope.init(rt.isolate());
             defer scope.deinit();
+            job.complete(job);
             const mapped = if (job.start_error) |err| Mapped{
                 .is_ok = false,
                 .value = try ops.errorValue(.{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = rt.gpa }, err),
@@ -188,6 +190,16 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             d.result = @call(.auto, function, d.args);
             d.result_ready = true;
         }
+        fn complete(job: *Job) void {
+            const d = data(job);
+            inline for (js_params, 0..) |T, i| {
+                if (comptime ops.isAsyncArg(T.?)) {
+                    if (@hasDecl(T.?, "beforeResolve")) {
+                        if (i < d.initialized) d.args[i + @intFromBool(takes_scope)].beforeResolve();
+                    }
+                }
+            }
+        }
         fn destroy(job: *Job) void {
             const d = data(job);
             const gpa = job.driver.gpa;
@@ -216,7 +228,7 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             const driver = &rt.async_driver;
             const d = try rt.gpa.create(Data);
             d.* = .{
-                .header = .{ .driver = driver, .promise_id = 0, .execution = options.execution, .run = run, .map = map, .destroy = destroy },
+                .header = .{ .driver = driver, .promise_id = 0, .execution = options.execution, .run = run, .complete = complete, .map = map, .destroy = destroy },
                 // Workers never allocate through the runtime's potentially
                 // single-threaded allocator. Each arena changes owners once.
                 .arena = .init(std.heap.smp_allocator),
@@ -224,17 +236,22 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             };
             var transferred = false;
             defer if (!transferred) destroy(&d.header);
-            const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator() };
+            var scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator() };
             d.header.promise_id = try ops.fromV8(i32, scope, c.v8__FunctionCallbackInfo__Get(cb, 0));
+            // Reject active IDs before argument setup can replace a cancel
+            // registration belonging to an existing operation.
+            if (driver.jobs.contains(d.header.promise_id)) return error.DuplicatePromiseId;
+            scope.promise_id = d.header.promise_id;
             if (takes_scope) d.args[0] = .{ .io = rt.io, .allocator = d.arena.allocator() };
             inline for (js_params, 0..) |T, i| {
-                if (comptime T.? != bool and T.? != i32 and T.? != u32 and T.? != f64 and T.? != []const u8 and !ops.isBuffer(T.?) and !ops.isResource(T.?))
-                    @compileError("async op arguments must be native scalar/string/buffer/resource values");
+                if (comptime T.? != bool and T.? != i32 and T.? != u32 and T.? != f64 and T.? != []const u8 and !ops.isBuffer(T.?) and !ops.isResource(T.?) and !ops.isAsyncArg(T.?))
+                    @compileError("async op arguments must be native scalars, strings, buffers, resources or async arguments");
                 d.args[i + @intFromBool(takes_scope)] = try ops.fromV8(T.?, scope, c.v8__FunctionCallbackInfo__Get(cb, @intCast(i + 1)));
                 d.initialized += 1;
             }
             if (options.execution == .inline_ready and options.scheduling == .eager) {
                 run(&d.header);
+                complete(&d.header);
                 const mapped = try map(&d.header, rt);
                 if (!mapped.is_ok) {
                     _ = c.v8__Isolate__ThrowException(rt.isolate(), mapped.value);

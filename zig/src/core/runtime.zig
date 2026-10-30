@@ -1463,6 +1463,55 @@ test "buffer argument owners are released on conversion and async errors" {
     , &exception);
 }
 
+const PipeTestOps = struct {
+    const declarations = [_]ops.OpDecl{
+        ops.op("op_test_make_cancel", makeCancel),
+        ops.op("op_test_wait_entered", waitEntered),
+        ops.op("op_test_rewind", rewind),
+        ops.op("op_test_release", AsyncGateTest.release),
+    };
+    fn makeCancel(scope: ops.Scope, canceled: bool) !u32 {
+        const R = @import("resources.zig");
+        const C = @import("async_cancel.zig").CancelHandle;
+        var handle: C = .init(scope.runtime.gpa);
+        if (canceled) handle.cancel();
+        return scope.runtime.resources.add(try R.Resource.create(scope.runtime.gpa, C, handle));
+    }
+    fn waitEntered(scope: ops.Scope) !void {
+        try AsyncGateTest.entered.wait(scope.runtime.io);
+    }
+    fn rewind(resource: @import("resources.zig").ResourceRef(ResourceIoTest)) void {
+        resource.ptr().read_offset = 0;
+    }
+};
+
+const PipeBlockingResource = struct {
+    mode: enum { ready, block_read, block_write },
+    produced: bool = false,
+    drops: *usize,
+    pub fn read(self: *@This(), io: std.Io, data: []u8) !usize {
+        if (self.mode == .block_read) {
+            AsyncGateTest.entered.set(io);
+            try AsyncGateTest.gate.wait(io);
+            return 0;
+        }
+        if (self.produced or data.len == 0) return 0;
+        data[0] = 42;
+        self.produced = true;
+        return 1;
+    }
+    pub fn write(self: *@This(), io: std.Io, data: []const u8) !usize {
+        if (self.mode == .block_write) {
+            AsyncGateTest.entered.set(io);
+            try AsyncGateTest.gate.wait(io);
+        }
+        return data.len;
+    }
+    pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+        self.drops.* += 1;
+    }
+};
+
 const ResourceIoTest = struct {
     file: std.Io.File,
     io: std.Io,
@@ -1560,6 +1609,139 @@ test "core resource I/O handles files, partial writes, EOF and retained pending 
     const output = try tmp.dir.readFileAlloc(io, "core-io", gpa, .unlimited);
     defer gpa.free(output);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9 }, output);
+}
+
+test "native pipe copies files and consumes cancellation RIDs before callbacks and error builders" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const content = "chunks travel through native resources";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "source", .data = content });
+    AsyncGateTest.gate.reset();
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &PipeTestOps.declarations });
+    defer rt.destroy(gpa);
+    const source = try tmp.dir.openFile(io, "source", .{});
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = source, .io = io, .drops = &drops }));
+    const sink = try tmp.dir.createFile(io, "sink", .{ .read = true });
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = sink, .io = io, .drops = &drops }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///native-file-pipe.js",
+        \\import { op_pipe } from 'ext:core/ops';
+        \\const c = Deno.core, make = c.ops.op_test_make_cancel;
+        \\const cancel = make(false), pending = op_pipe(0,1,cancel);
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\await pending.then(value => {
+        \\  if (value !== null || c.resources()[cancel] !== undefined) throw new Error('cancel RID survived resolution');
+        \\  if (!c.resources()[0] || !c.resources()[1]) throw new Error('pipe closed source/sink');
+        \\});
+        \\if (String.fromCharCode(...await c.readAll(1)) !== 'chunks travel through native resources') throw new Error('file copy');
+        \\await op_pipe(0,1);
+        \\await op_pipe(0,1,null);
+        \\await op_pipe(0,1,999);
+        \\const invalidSourceCancel = make(false);
+        \\try { await op_pipe(99,1,invalidSourceCancel); throw new Error('missing source accepted'); }
+        \\catch (e) { if (!(e instanceof c.BadResource)) throw e; }
+        \\if (!c.resources()[invalidSourceCancel]) throw new Error('setup error consumed cancel RID');
+        \\c.close(invalidSourceCancel);
+        \\const badSink = make(false), errorCancel = make(false);
+        \\class Unsupported extends Error {
+        \\  constructor(message) {
+        \\    super(message);
+        \\    if (c.resources()[errorCancel] !== undefined) throw new Error('cleanup after error builder');
+        \\  }
+        \\}
+        \\c.registerErrorClass('NotSupported', Unsupported);
+        \\c.ops.op_test_rewind(0);
+        \\try { await op_pipe(0,badSink,errorCancel); throw new Error('unsupported sink accepted'); }
+        \\catch (e) { if (!(e instanceof Unsupported) || e.message !== 'The operation is not supported') throw e; }
+        \\if (!c.resources()[badSink]) throw new Error('pipe closed unsupported sink');
+        \\c.close(badSink);
+        \\// Rust consumes an optional RID even when it names a different type.
+        \\await op_pipe(0,1,0);
+        \\if (c.resources()[0] !== undefined || !c.resources()[1]) throw new Error('wrong-type cancel RID');
+        \\c.close(1);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 2), drops);
+    const copied = try tmp.dir.readFileAlloc(io, "sink", gpa, .unlimited);
+    defer gpa.free(copied);
+    try std.testing.expectEqualStrings(content, copied);
+}
+
+test "closing a shared cancel handle interrupts blocked pipe reads and writes" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    for ([_]bool{ false, true }) |block_write| {
+        AsyncGateTest.gate.reset();
+        AsyncGateTest.entered.reset();
+        var drops: usize = 0;
+        const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &PipeTestOps.declarations });
+        defer rt.destroy(gpa);
+        for (0..2) |_| {
+            _ = try rt.resources.add(try R.Resource.create(gpa, PipeBlockingResource, .{ .mode = if (block_write) .ready else .block_read, .drops = &drops }));
+            _ = try rt.resources.add(try R.Resource.create(gpa, PipeBlockingResource, .{ .mode = if (block_write) .block_write else .ready, .drops = &drops }));
+        }
+        var exception: ?[]u8 = null;
+        defer if (exception) |e| gpa.free(e);
+        rt.executeMainModule(gpa, "file:///cancel-pipe.js",
+            \\const c = Deno.core, pipe = c.ops.op_pipe, make = c.ops.op_test_make_cancel;
+            \\const cancel = make(false);
+            \\const first = pipe(0,1,cancel), second = pipe(2,3,cancel);
+            \\function interrupted(e) {
+            \\  if (!(e instanceof c.Interrupted) || e.message !== 'operation canceled') throw e;
+            \\  if (c.resources()[cancel] !== undefined) throw new Error('cancel RID survived rejection');
+            \\}
+            \\const caught = Promise.all([first.catch(interrupted), second.catch(interrupted), c.ops.op_void_async_deferred()]);
+            \\c.ops.op_test_wait_entered();
+            \\c.close(cancel);
+            \\await caught;
+            \\if (Object.keys(c.resources()).length !== 4) throw new Error('pipe closed resources');
+            \\const before = make(true);
+            \\try { await pipe(0,1,before); throw new Error('already-canceled pipe ran'); }
+            \\catch (e) { if (!(e instanceof c.Interrupted)) throw e; }
+            \\if (c.resources()[before] !== undefined) throw new Error('already-canceled RID survived');
+            \\for (let rid=0; rid<4; ++rid) c.close(rid);
+        , &exception) catch |err| {
+            std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+            return err;
+        };
+        try std.testing.expectEqual(@as(usize, 4), drops);
+        try std.testing.expectEqual(@as(usize, 0), rt.async_driver.jobs.count());
+    }
+}
+
+test "runtime shutdown joins all pipes before releasing shared cancel registrations" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    var drops: usize = 0;
+    {
+        const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &PipeTestOps.declarations });
+        defer rt.destroy(gpa);
+        for (0..2) |_| {
+            _ = try rt.resources.add(try R.Resource.create(gpa, PipeBlockingResource, .{ .mode = .block_read, .drops = &drops }));
+            _ = try rt.resources.add(try R.Resource.create(gpa, PipeBlockingResource, .{ .mode = .ready, .drops = &drops }));
+        }
+        var exception: ?[]u8 = null;
+        defer if (exception) |e| gpa.free(e);
+        _ = try rt.executeScript(gpa, "pending-pipes.js",
+            \\const cancel = Deno.core.ops.op_test_make_cancel(false);
+            \\Deno.core.ops.op_pipe(0,1,cancel);
+            \\Deno.core.ops.op_pipe(2,3,cancel);
+            \\Deno.core.ops.op_test_wait_entered();
+        , &exception);
+    }
+    try std.testing.expectEqual(@as(usize, 4), drops);
 }
 
 test "resource I/O uses registered errors and validates erased arguments" {

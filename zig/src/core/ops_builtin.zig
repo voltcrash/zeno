@@ -27,6 +27,7 @@ pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
     op("op_cancel_read", opCancelRead),
     async_ops.decl("op_read", opRead, .{}),
     async_ops.decl("op_read_all", opReadAll, .{}),
+    async_ops.decl("op_pipe", opPipe, .{}),
     async_ops.decl("op_write", opWrite, .{}),
     async_ops.decl("op_write_all", opWriteAll, .{}),
     async_ops.decl("op_shutdown", opShutdown, .{}),
@@ -180,6 +181,9 @@ fn opRead(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u3
 fn opReadAll(scope: async_ops.AsyncScope, resource: Resource) !JsBuffer {
     const data = try @import("resource_io.zig").readAll(std.heap.smp_allocator, scope.io, resource);
     return JsBuffer.fromOwnedSlice(data);
+}
+fn opPipe(scope: async_ops.AsyncScope, source: Resource, sink: Resource, cancel: @import("pipe_cancel.zig").PipeCancel) !void {
+    try @import("resource_io.zig").pipe(std.heap.smp_allocator, scope.io, source, sink, cancel.flag());
 }
 fn opWrite(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u32 {
     return @intCast(try resource.write(scope.io, try buffer.bytes()));

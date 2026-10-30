@@ -36,6 +36,8 @@ pub const Scope = struct {
     context: *const v8.Context,
     /// Valid for the duration of the call.
     arena: std.mem.Allocator,
+    /// Available while converting async-only arguments on the runtime thread.
+    promise_id: ?i32 = null,
 };
 
 /// The isolate data slot holding the `*JsRuntime`.
@@ -71,6 +73,7 @@ fn Callback(comptime func: anytype) type {
                 if (i < initialized) releaseArg(T.?, args[i + @intFromBool(takes_scope)]);
             };
             inline for (js_params, 0..) |T, i| {
+                if (comptime isAsyncArg(T.?)) @compileError("async-only argument in a synchronous op");
                 const value = c.v8__FunctionCallbackInfo__Get(cb_info, @intCast(i));
                 args[i + @intFromBool(takes_scope)] = fromV8(T.?, scope, value) catch |err| {
                     return throwError(scope, err);
@@ -97,6 +100,7 @@ fn Callback(comptime func: anytype) type {
 pub const ConvertError = error{ OutOfMemory, JsException };
 
 pub fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertError!T {
+    if (comptime isAsyncArg(T)) return T.fromV8(scope, value);
     if (comptime isBuffer(T)) return T.fromV8(scope, value);
     if (comptime isResource(T)) {
         const rid = try fromV8(u32, scope, value);
@@ -148,11 +152,18 @@ pub fn isResource(comptime T: type) bool {
     return @typeInfo(T) == .@"struct" and @hasDecl(T, "ResourceType");
 }
 
+/// Internal native async arguments convert and release on the runtime thread.
+/// Their optional beforeResolve hook runs after joining the worker and before
+/// error construction or promise settlement. Bodies only borrow these values.
+pub fn isAsyncArg(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "is_async_arg");
+}
+
 /// Bindings own arguments and returned buffers; native bodies borrow args.
 pub fn releaseArg(comptime T: type, value: T) void {
-    if (comptime isBuffer(T)) {
-        var buffer = value;
-        buffer.deinit();
+    if (comptime isBuffer(T) or isAsyncArg(T)) {
+        var owner = value;
+        owner.deinit();
     } else if (comptime isResource(T)) value.deinit();
 }
 
@@ -167,6 +178,7 @@ pub fn throwError(scope: Scope, err: anyerror) void {
 
 pub fn errorValue(scope: Scope, err: anyerror) ConvertError!*const v8.Value {
     if (err == error.NotSupported) return customError(scope, "NotSupported", "The operation is not supported");
+    if (err == error.OperationCanceled) return customError(scope, "Interrupted", "operation canceled");
     return c.v8__Exception__Error(try v8.newString(scope.isolate, @errorName(err)));
 }
 
