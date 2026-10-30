@@ -125,6 +125,7 @@ pub extern fn v8__HandleScope__DESTRUCT(self: *HandleScope) void;
 pub extern fn v8__TryCatch__CONSTRUCT(buf: *TryCatch, isolate: *Isolate) void;
 pub extern fn v8__TryCatch__DESTRUCT(self: *TryCatch) void;
 pub extern fn v8__TryCatch__HasCaught(self: *const TryCatch) bool;
+pub extern fn v8__TryCatch__Reset(self: *TryCatch) void;
 pub extern fn v8__TryCatch__Exception(self: *const TryCatch) ?*const Value;
 pub extern fn v8__TryCatch__StackTrace(self: *const TryCatch, context: *const Context) ?*const Value;
 pub extern fn v8__TryCatch__Message(self: *const TryCatch) ?*const Message;

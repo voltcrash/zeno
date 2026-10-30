@@ -6,6 +6,7 @@ const v8 = @import("../v8/v8.zig");
 const c = v8.c;
 const ops = @import("ops.zig");
 const JsRuntime = @import("runtime.zig").JsRuntime;
+const errors = @import("errors.zig");
 
 pub const Scheduling = enum { eager, deferred, lazy };
 /// inline_ready bodies must be nonblocking; they model already-ready Rust
@@ -17,6 +18,12 @@ pub const AsyncScope = struct {
     /// Per-op arena; allocate returned strings here, or return a static/input
     /// slice. Results remain valid until conversion on the runtime thread.
     allocator: std.mem.Allocator,
+    error_context: *errors.Context,
+
+    /// Error fields follow the same arena/input lifetime rules as results.
+    pub fn fail(self: AsyncScope, exception: errors.JsError) error{OpError} {
+        return self.error_context.fail(exception);
+    }
 };
 const Mapped = struct { value: *const v8.Value, is_ok: bool };
 const Job = struct {
@@ -39,6 +46,7 @@ pub const Driver = struct {
     io: std.Io,
     jobs: std.AutoHashMapUnmanaged(i32, *Job) = .empty,
     refed_count: usize = 0,
+    unstarted_count: usize = 0,
     mutex: std.Io.Mutex = .init,
     ready_head: ?*Job = null,
     ready_tail: ?*Job = null,
@@ -77,7 +85,9 @@ pub const Driver = struct {
     }
 
     fn start(self: *Driver, job: *Job) void {
+        std.debug.assert(!job.started);
         job.started = true;
+        self.unstarted_count -= 1;
         if (job.execution == .inline_ready) {
             worker(job);
         } else {
@@ -96,6 +106,7 @@ pub const Driver = struct {
         if (self.jobs.contains(job.promise_id)) return error.DuplicatePromiseId;
         try self.jobs.put(self.gpa, job.promise_id, job);
         self.refed_count += 1;
+        self.unstarted_count += 1;
         if (scheduling != .lazy) self.start(job);
     }
 
@@ -156,7 +167,9 @@ pub const Driver = struct {
         self.mutex.lockUncancelable(self.io);
         const ready = self.ready_head != null;
         self.mutex.unlock(self.io);
-        if (!ready) self.wake.waitTimeout(self.io, timeout) catch {};
+        // Microtasks may submit lazy jobs after dispatchReady. Return to the
+        // next poll before waiting for a worker that has not been started.
+        if (!ready and self.unstarted_count == 0) self.wake.waitTimeout(self.io, timeout) catch {};
     }
 };
 
@@ -181,6 +194,7 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             result: Ret = undefined,
             initialized: usize = 0,
             result_ready: bool = false,
+            error_context: errors.Context = .{},
         };
         fn data(job: *Job) *Data {
             return @alignCast(@fieldParentPtr("header", job));
@@ -216,7 +230,7 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
         }
         fn map(job: *Job, rt: *JsRuntime) v8.Error!Mapped {
             const d = data(job);
-            const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator() };
+            const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator(), .error_context = &d.error_context };
             const value = if (@typeInfo(Ret) == .error_union) d.result catch |err| return .{
                 .is_ok = false,
                 .value = try ops.errorValue(scope, err),
@@ -236,13 +250,13 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             };
             var transferred = false;
             defer if (!transferred) destroy(&d.header);
-            var scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator() };
+            var scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = d.arena.allocator(), .error_context = &d.error_context };
             d.header.promise_id = try ops.fromV8(i32, scope, c.v8__FunctionCallbackInfo__Get(cb, 0));
             // Reject active IDs before argument setup can replace a cancel
             // registration belonging to an existing operation.
             if (driver.jobs.contains(d.header.promise_id)) return error.DuplicatePromiseId;
             scope.promise_id = d.header.promise_id;
-            if (takes_scope) d.args[0] = .{ .io = rt.io, .allocator = d.arena.allocator() };
+            if (takes_scope) d.args[0] = .{ .io = rt.io, .allocator = d.arena.allocator(), .error_context = &d.error_context };
             inline for (js_params, 0..) |T, i| {
                 if (comptime T.? != bool and T.? != i32 and T.? != u32 and T.? != f64 and T.? != []const u8 and !ops.isBuffer(T.?) and !ops.isResource(T.?) and !ops.isAsyncArg(T.?))
                     @compileError("async op arguments must be native scalars, strings, buffers, resources or async arguments");
