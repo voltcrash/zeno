@@ -7,6 +7,7 @@ const std = @import("std");
 
 pub const ResourceId = u32;
 pub const LookupError = error{BadResourceId};
+pub const SizeHint = struct { min: u64 = 0, max: ?u64 = null };
 
 const VTable = struct {
     type_token: *const u8,
@@ -20,6 +21,7 @@ const VTable = struct {
     write_sync: *const fn (*Header, std.Io, []const u8) anyerror!usize,
     write_all: *const fn (*Header, std.Io, []const u8) anyerror!void,
     shutdown: *const fn (*Header, std.Io) anyerror!void,
+    size_hint: *const fn (*Header) SizeHint,
     destroy: *const fn (*Header) void,
 };
 const Header = struct {
@@ -34,6 +36,7 @@ const Header = struct {
 /// Optional I/O methods take (*T, std.Io, buffer) and return !usize:
 /// read/readSync use []u8, write/writeSync use []const u8. writeAll takes
 /// []const u8 and returns !void; shutdown takes (*T, std.Io) and returns !void.
+/// sizeHint(*const T) returns SizeHint; it may be queried on an I/O worker.
 pub const Resource = struct {
     pub const ResourceType = void;
     header: *Header,
@@ -91,6 +94,9 @@ pub const Resource = struct {
     pub fn shutdown(self: Resource, io: std.Io) !void {
         return self.header.vtable.shutdown(self.header, io);
     }
+    pub fn sizeHint(self: Resource) SizeHint {
+        return self.header.vtable.size_hint(self.header);
+    }
 
     pub fn downcast(self: Resource, comptime T: type) LookupError!ResourceRef(T) {
         if (self.header.vtable.type_token != &Impl(T).type_token) return error.BadResourceId;
@@ -135,6 +141,7 @@ fn Impl(comptime T: type) type {
             .write_sync = writeSync,
             .write_all = writeAll,
             .shutdown = shutdown,
+            .size_hint = sizeHint,
             .destroy = destroy,
         };
 
@@ -182,6 +189,9 @@ fn Impl(comptime T: type) type {
         fn shutdown(h: *Header, io: std.Io) !void {
             if (@hasDecl(T, "shutdown")) return node(h).value.shutdown(io);
             return error.NotSupported;
+        }
+        fn sizeHint(h: *Header) SizeHint {
+            return if (@hasDecl(T, "sizeHint")) node(h).value.sizeHint() else .{};
         }
         fn destroy(h: *Header) void {
             const n = node(h);

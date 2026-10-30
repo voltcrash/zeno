@@ -300,6 +300,9 @@ pub extern fn v8__Array__New_with_elements(isolate: *Isolate, elements: [*]const
 // std::shared_ptr<BackingStore>, exposed by binding.cc as two pointer words.
 pub const SharedBackingStore = extern struct { words: [2]usize };
 pub const BackingStore = opaque {};
+pub const BackingStoreDeleter = *const fn (?*anyopaque, usize, ?*anyopaque) callconv(.c) void;
+pub extern fn v8__ArrayBuffer__NewBackingStore__with_data(data: ?*anyopaque, len: usize, deleter: BackingStoreDeleter, context: ?*anyopaque) *BackingStore;
+pub extern fn std__shared_ptr__v8__BackingStore__CONVERT__std__unique_ptr(store: *BackingStore) SharedBackingStore;
 pub const ArrayBufferView = opaque {};
 pub const SharedArrayBuffer = opaque {};
 pub extern fn v8__Value__IsUint8Array(self: *const Value) bool;

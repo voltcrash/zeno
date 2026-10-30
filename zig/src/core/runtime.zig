@@ -1576,7 +1576,7 @@ test "resource I/O uses registered errors and validates erased arguments" {
         \\class Unsupported extends Error {}
         \\c.registerErrorClass('NotSupported', Unsupported);
         \\for (const operation of [() => c.readSync(0,b), () => c.writeSync(0,b),
-        \\  () => c.read(0,b), () => c.write(0,b), () => c.writeAll(0,b), () => c.shutdown(0)]) {
+        \\  () => c.read(0,b), () => c.readAll(0), () => c.write(0,b), () => c.writeAll(0,b), () => c.shutdown(0)]) {
         \\  let caught = false;
         \\  try { await operation(); } catch (e) {
         \\    caught = e instanceof Unsupported && e.message === 'The operation is not supported';
@@ -1584,7 +1584,7 @@ test "resource I/O uses registered errors and validates erased arguments" {
         \\  if (!caught) throw new Error('unsupported I/O did not use registered class');
         \\}
         \\for (const operation of [() => c.readSync(99,b), () => c.writeSync(99,b),
-        \\  () => c.read(99,b), () => c.write(99,b), () => c.writeAll(99,b), () => c.shutdown(99)]) {
+        \\  () => c.read(99,b), () => c.readAll(99), () => c.write(99,b), () => c.writeAll(99,b), () => c.shutdown(99)]) {
         \\  let caught = false;
         \\  try { await operation(); } catch (e) { caught = e instanceof c.BadResource; }
         \\  if (!caught) throw new Error('bad RID');
@@ -1613,12 +1613,127 @@ test "destroying a runtime cancels blocked resource I/O before final release" {
     defer if (exception) |e| gpa.free(e);
     _ = try rt.executeScript(gpa, "blocked-resource.js",
         \\Deno.core.read(0, new Uint8Array(8));
+        \\Deno.core.readAll(0);
         \\Deno.core.close(0);
     , &exception);
     try AsyncGateTest.entered.wait(io);
     try std.testing.expectEqual(@as(usize, 0), drops);
     rt.destroy(gpa);
     try std.testing.expectEqual(@as(usize, 1), drops);
+}
+
+test "core read-all returns large and empty owned buffers after RID closure" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const data = try gpa.alloc(u8, 200123);
+    defer gpa.free(data);
+    for (data, 0..) |*byte, i| byte.* = @intCast(i % 251);
+    try tmp.dir.writeFile(io, .{ .sub_path = "read-all", .data = data });
+    AsyncGateTest.gate.reset();
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &.{ops.op("op_test_release", AsyncGateTest.release)} });
+    defer rt.destroy(gpa);
+    const file = try tmp.dir.openFile(io, "read-all", .{});
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = file, .io = io, .drops = &drops }));
+    const empty = try tmp.dir.openFile(io, "read-all", .{});
+    _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = empty, .io = io, .drops = &drops, .read_offset = data.len }));
+    const Failure = struct {
+        offset: usize = 0,
+        pub fn read(self: *@This(), _: std.Io, bytes: []u8) !usize {
+            if (self.offset > 0) return error.ReadFailure;
+            bytes[0] = 42;
+            self.offset += 1;
+            return 1;
+        }
+    };
+    _ = try rt.resources.add(try R.Resource.create(gpa, Failure, .{}));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///core-read-all.js",
+        \\import { op_read_all } from 'ext:core/ops';
+        \\const c = Deno.core, U8 = Uint8Array;
+        \\const pending = op_read_all(0), emptyPending = c.readAll(1);
+        \\c.close(0); c.close(1);
+        \\globalThis.Uint8Array = () => { throw new Error('poisoned constructor'); };
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\const result = await pending, empty = await emptyPending;
+        \\globalThis.Uint8Array = U8;
+        \\if (!(result instanceof U8) || result.length !== 200123 || result.byteOffset !== 0 || result.buffer.byteLength !== result.length) throw new Error('result shape');
+        \\for (let i=0; i<result.length; ++i) if (result[i] !== i%251) throw new Error(`byte ${i}`);
+        \\if (!(empty instanceof U8) || empty.length !== 0 || empty.buffer.byteLength !== 0) throw new Error('empty result');
+        \\try { await c.readAll(2); throw new Error('partial failure ignored'); }
+        \\catch (e) { if (e.message !== 'ReadFailure') throw e; }
+        \\c.close(2);
+        \\// Job arenas and native result owners have been released; JS still owns data.
+        \\await c.ops.op_void_async_deferred();
+        \\if (result[200122] !== 200122%251) throw new Error('result lifetime');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 2), drops);
+    try std.testing.expectEqual(@as(usize, 0), rt.resources.len());
+}
+
+test "worker-owned native byte results keep their original allocation in V8" {
+    v8.initForTesting();
+    const B = @import("buffers.zig");
+    const a = @import("async_ops.zig");
+    const F = struct {
+        var address: usize = 0;
+        fn allocate() !B.JsBuffer {
+            const bytes = try std.heap.smp_allocator.dupe(u8, "native owned bytes");
+            address = @intFromPtr(bytes.ptr);
+            return B.JsBuffer.fromOwnedSlice(bytes);
+        }
+        fn sameAllocation(buffer: B.JsBuffer) !bool {
+            return @intFromPtr((try buffer.bytes()).ptr) == address;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        a.decl("op_allocate_bytes", F.allocate, .{}), ops.op("op_same_allocation", F.sameAllocation),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///owned-native-bytes.js",
+        \\const c = Deno.core, result = await c.ops.op_allocate_bytes();
+        \\if (!c.ops.op_same_allocation(result) || result.length !== 18) throw new Error('copied bytes');
+        \\await c.ops.op_void_async_deferred();
+        \\if (String.fromCharCode(...result) !== 'native owned bytes') throw new Error('released result');
+    , &exception);
+}
+
+test "native-owned buffer storage survives isolate disposal and rewrapping" {
+    v8.initForTesting();
+    const B = @import("buffers.zig");
+    const gpa = std.testing.allocator;
+    const bytes = try std.heap.smp_allocator.dupe(u8, "owned across isolates");
+    var buffer = B.JsBuffer.fromOwnedSlice(bytes);
+    defer buffer.deinit();
+    try std.testing.expectEqual(@intFromPtr(bytes.ptr), @intFromPtr((try buffer.bytes()).ptr));
+    {
+        const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+        defer rt.destroy(gpa);
+        const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = gpa };
+        try v8.setProperty(rt.isolate(), rt.context, v8.c.v8__Context__Global(rt.context), "nativeBytes", try buffer.toV8(scope));
+    }
+    try std.testing.expectEqualStrings("owned across isolates", try buffer.bytes());
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    const scope: ops.Scope = .{ .runtime = rt, .isolate = rt.isolate(), .context = rt.context, .arena = gpa };
+    try v8.setProperty(rt.isolate(), rt.context, v8.c.v8__Context__Global(rt.context), "nativeBytes", try buffer.toV8(scope));
+    buffer.deinit();
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    _ = try rt.executeScript(gpa, "owned-second-isolate.js",
+        \\if (String.fromCharCode(...nativeBytes) !== 'owned across isolates') throw new Error('lost native owner');
+    , &exception);
 }
 
 test "async I/O retains resource and detached buffer until completion" {
