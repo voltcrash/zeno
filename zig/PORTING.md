@@ -68,6 +68,7 @@ have no V8 for now.
 | `src/core/resources.zig`       | `libs/core/io/{resource,resource_table}.rs`     |
 | `src/core/resource_io.zig`     | `libs/core/ops_builtin.rs` read-all             |
 | `src/core/buffer_strategy.zig` | `libs/core/io/buffer_strategy.rs`               |
+| `src/core/byte_view.zig`       | `libs/core/io/buffers.rs` owned views           |
 | `src/core/async_ops.zig`       | `libs/core/runtime/op_driver`                   |
 | `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
 | `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)               |
@@ -148,8 +149,18 @@ have no V8 for now.
   Partial writes are retried by the default write-all implementation; a
   zero-progress write fails instead of spinning. Unsupported methods use
   deno_error's `NotSupported` class/message through the registered core error
-  builder. Runtime stdio registration, resource piping, chunk-owned read
-  fallbacks and complete native I/O error mapping still follow.
+  builder. Runtime stdio registration, resource piping and complete native I/O
+  error mapping still follow.
+
+- **Native chunk reads:** resources can supply source-owned byte chunks,
+  override BYOB reads, or provide both. Core reads copy a chunk into the
+  caller's buffer when the source only implements chunk reads. BYOB-only
+  resources allocate a zeroed chunk when a native caller requests one. Native
+  byte views share allocation ownership across clones and split ranges, with
+  independent cursors and bounds. Clones are read-only; filling a new chunk
+  requires unique ownership. Atomic ownership permits transfer between workers
+  without a V8 dependency. This supplies the buffer contract needed by the
+  native resource-pipe pump, which still follows with cancellation support.
 
 - **Read-all and owned byte results:** `Deno.core.readAll` uses Rust's adaptive
   buffer strategy, including size hints, short reads, saturating arithmetic and
@@ -179,5 +190,5 @@ have no V8 for now.
   the runtime thread. Shared allocator ownership lets retained stores survive
   isolate disposal and be rewrapped in another isolate.
 
-Next in phase 3: remaining resource I/O ops and unified I/O/platform wakeups,
-then remaining built-in ops.
+Next in phase 3: resource piping/cancellation, remaining resource I/O ops and
+unified I/O/platform wakeups, then remaining built-in ops.
