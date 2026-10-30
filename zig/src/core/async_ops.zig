@@ -168,8 +168,8 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
     const takes_scope = info.param_types.len > 0 and info.param_types[0].? == AsyncScope;
     const Ret = info.return_type.?;
     const Value = if (@typeInfo(Ret) == .error_union) @typeInfo(Ret).error_union.payload else Ret;
-    if (Value != void and Value != bool and Value != i32 and Value != u32 and Value != f64 and Value != []const u8 and Value != []u8)
-        @compileError("async op results must be native scalar/string/void values");
+    if (comptime Value != void and Value != bool and Value != i32 and Value != u32 and Value != f64 and Value != []const u8 and Value != []u8 and !ops.isBuffer(Value))
+        @compileError("async op results must be native scalar/string/buffer/void values");
     return struct {
         pub const js_params = info.param_types[@intFromBool(takes_scope)..];
         const Data = struct {
@@ -177,6 +177,8 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             arena: std.heap.ArenaAllocator,
             args: std.meta.ArgsTuple(@TypeOf(function)),
             result: Ret = undefined,
+            initialized: usize = 0,
+            result_ready: bool = false,
         };
         fn data(job: *Job) *Data {
             return @alignCast(@fieldParentPtr("header", job));
@@ -184,10 +186,19 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
         fn run(job: *Job) void {
             const d = data(job);
             d.result = @call(.auto, function, d.args);
+            d.result_ready = true;
         }
         fn destroy(job: *Job) void {
             const d = data(job);
             const gpa = job.driver.gpa;
+            if (d.result_ready) {
+                if (@typeInfo(Ret) == .error_union) {
+                    if (d.result) |value| ops.releaseArg(@TypeOf(value), value) else |_| {}
+                } else ops.releaseArg(Ret, d.result);
+            }
+            inline for (js_params, 0..) |T, i| {
+                if (i < d.initialized) ops.releaseArg(T.?, d.args[i + @intFromBool(takes_scope)]);
+            }
             d.arena.deinit();
             gpa.destroy(d);
         }
@@ -217,9 +228,10 @@ fn Callback(comptime function: anytype, comptime options: Options) type {
             d.header.promise_id = try ops.fromV8(i32, scope, c.v8__FunctionCallbackInfo__Get(cb, 0));
             if (takes_scope) d.args[0] = .{ .io = rt.io, .allocator = d.arena.allocator() };
             inline for (js_params, 0..) |T, i| {
-                if (T.? != bool and T.? != i32 and T.? != u32 and T.? != f64 and T.? != []const u8)
-                    @compileError("async op arguments must be native scalar/string values");
+                if (comptime T.? != bool and T.? != i32 and T.? != u32 and T.? != f64 and T.? != []const u8 and !ops.isBuffer(T.?) and !ops.isResource(T.?))
+                    @compileError("async op arguments must be native scalar/string/buffer/resource values");
                 d.args[i + @intFromBool(takes_scope)] = try ops.fromV8(T.?, scope, c.v8__FunctionCallbackInfo__Get(cb, @intCast(i + 1)));
+                d.initialized += 1;
             }
             if (options.execution == .inline_ready and options.scheduling == .eager) {
                 run(&d.header);

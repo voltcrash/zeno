@@ -65,6 +65,9 @@ have no V8 for now.
 | `src/cli/help.zig`     | `libs/cli_parser/src/help.rs`                 |
 | `src/v8/`              | the `v8` crate (rusty_v8)                     |
 | `src/core/runtime.zig` | `libs/core/runtime/jsruntime.rs`              |
+| `src/core/resources.zig` | `libs/core/io/resource_table.rs`             |
+| `src/core/async_ops.zig` | `libs/core/runtime/op_driver`                |
+| `src/core/buffers.zig` | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice` |
 | `src/core/modules.zig` | `libs/core/modules` (`ModuleMap`)             |
 | `src/core/url.zig`     | `resolve_import` (interim URL handling)       |
 | `src/tools/run.zig`    | `cli/tools/run/mod.rs` (`run_script`)         |
@@ -147,8 +150,17 @@ have no V8 for now.
   result arena. Workers never receive V8 handles. Completions wake the event
   loop and resolve promises on its thread. Ref/unref controls liveness;
   cancellation and shutdown join each owned future before freeing its data.
-  The core async add/void/error test ops are ported. Buffer/resource argument
-  bindings, resource-backed I/O ops, metrics and fast calls remain to be ported.
+  The core async add/void/error test ops are ported. Resource-backed I/O ops,
+  metrics and fast calls remain to be ported.
 
-Next in phase 3: buffer/resource async bindings, resource-backed I/O and unified
-I/O/platform wakeups, then remaining built-in ops.
+- **Buffer/resource bindings:** sync and async native ops accept typed resource
+  handles and retained backing-store ranges. Buffer input modes mirror op2's
+  Uint8Array, ArrayBuffer and any-buffer converters. Offset views, empty,
+  detached, shared and resizable stores are supported. Native bodies borrow
+  arguments; return a cloned buffer owner when returning an existing input.
+  Bindings release owners after conversion, errors, cancellation or shutdown,
+  on the runtime thread. Shared allocator ownership lets retained stores
+  survive isolate disposal and be rewrapped in another isolate.
+
+Next in phase 3: resource-backed I/O and unified I/O/platform wakeups, then
+remaining built-in ops.

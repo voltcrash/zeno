@@ -1349,3 +1349,239 @@ test "unrefed op completion still wakes a loop kept alive by a timer" {
         \\c.cancelTimer(blocker);
     , &exception);
 }
+
+const BufferBindingTest = struct {
+    const B = @import("buffers.zig");
+    fn echo(buffer: B.JsBuffer) B.JsBuffer {
+        return buffer.clone();
+    }
+    fn any(buffer: B.AnyBuffer) B.AnyBuffer {
+        return buffer.clone();
+    }
+    fn length(buffer: B.ArrayBuffer) u32 {
+        return @intCast(buffer.len);
+    }
+    fn count(buffer: B.JsBuffer) f64 {
+        return @floatFromInt(v8.c.std__shared_ptr__v8__BackingStore__use_count(&buffer.store));
+    }
+    fn failAfterBuffer(_: B.JsBuffer, _: i32) void {}
+    fn failAsync(_: B.JsBuffer) error{BufferFailure}!B.JsBuffer {
+        return error.BufferFailure;
+    }
+    fn detach(_: ops.Scope, value: *const v8.Value) void {
+        _ = v8.c.v8__ArrayBuffer__Detach(@ptrCast(value), null);
+    }
+};
+
+test "buffer op bindings preserve byte ranges and typed input contracts" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        ops.op("op_echo_buffer", BufferBindingTest.echo),           ops.op("op_any_buffer", BufferBindingTest.any),
+        ops.op("op_array_buffer_length", BufferBindingTest.length), ops.op("op_detach_buffer", BufferBindingTest.detach),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///buffer-types.js",
+        \\const o = Deno.core.ops;
+        \\const full = new Uint8Array([1,2,3,4,5,6,7,8]);
+        \\const part = o.op_echo_buffer(full.subarray(2,5));
+        \\if (!(part instanceof Uint8Array) || part.byteOffset !== 2 || part.join() !== '3,4,5') throw new Error('range');
+        \\part[0] = 42;
+        \\if (full[2] !== 42) throw new Error('backing storage copied');
+        \\if (o.op_array_buffer_length(full.buffer) !== 8) throw new Error('ArrayBuffer');
+        \\if (o.op_any_buffer(new DataView(full.buffer,1,2)).join() !== '2,42') throw new Error('DataView range');
+        \\if (o.op_any_buffer(new Uint16Array(full.buffer,4,2)).join() !== '5,6,7,8') throw new Error('typed byte range');
+        \\if (o.op_any_buffer(full.buffer).length !== 8) throw new Error('any buffer');
+        \\for (const invalid of [[], {}, 'bytes', full.buffer, new Uint16Array(1), new Uint8ClampedArray(1), new DataView(full.buffer)]) {
+        \\  try { o.op_echo_buffer(invalid); throw new Error('accepted invalid'); }
+        \\  catch (e) { if (!(e instanceof TypeError) || e.message !== 'expected typed ArrayBufferView') throw e; }
+        \\}
+        \\try { o.op_array_buffer_length(full); throw new Error('accepted view'); }
+        \\catch (e) { if (!(e instanceof TypeError) || e.message !== 'expected ArrayBuffer') throw e; }
+        \\const empty = o.op_echo_buffer(new Uint8Array(0));
+        \\if (empty.length !== 0) throw new Error('empty');
+        \\const detached = new Uint8Array(4);
+        \\o.op_detach_buffer(detached.buffer);
+        \\if (o.op_echo_buffer(detached).length !== 0) throw new Error('detached range');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+}
+
+test "shared and resizable backing stores retain their native op ranges" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{ops.op("op_echo_buffer", BufferBindingTest.echo)} });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///buffer-stores.js",
+        \\const shared = new Uint8Array(new SharedArrayBuffer(8));
+        \\shared.set([1,2,3,4]);
+        \\const OriginalUint8Array = Uint8Array;
+        \\globalThis.Uint8Array = function() { throw new Error('poisoned constructor'); };
+        \\const result = Deno.core.ops.op_echo_buffer(shared.subarray(1,3));
+        \\globalThis.Uint8Array = OriginalUint8Array;
+        \\if (!(result.buffer instanceof SharedArrayBuffer) || result.byteOffset !== 1 || result.join() !== '2,3') throw new Error('shared output');
+        \\result[0] = 99;
+        \\if (shared[1] !== 99) throw new Error('shared storage copied');
+        \\const rab = new ArrayBuffer(8, {maxByteLength:16});
+        \\const view = new Uint8Array(rab,2,3);
+        \\view.set([5,6,7]);
+        \\const retained = Deno.core.ops.op_echo_buffer(view);
+        \\if (retained.byteOffset !== 2 || retained.join() !== '5,6,7') throw new Error('resizable range');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+}
+
+test "buffer argument owners are released on conversion and async errors" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        ops.op("op_buffer_count", BufferBindingTest.count),               ops.op("op_buffer_fail_conversion", BufferBindingTest.failAfterBuffer),
+        a.decl("op_buffer_fail_async", BufferBindingTest.failAsync, .{}),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///buffer-cleanup.js",
+        \\const o = Deno.core.ops, data = new Uint8Array(8);
+        \\const before = o.op_buffer_count(data);
+        \\try { o.op_buffer_fail_conversion(data, {valueOf() { throw new Error('conversion'); }}); }
+        \\catch (e) { if (e.message !== 'conversion') throw e; }
+        \\if (o.op_buffer_count(data) !== before) throw new Error('partial conversion leaked');
+        \\await Promise.all(Array.from({length:32}, () => o.op_buffer_fail_async(data).catch(e => {
+        \\  if (e.message !== 'BufferFailure') throw e;
+        \\})));
+        \\if (o.op_buffer_count(data) !== before) throw new Error('async failure leaked');
+    , &exception);
+}
+
+test "async I/O retains resource and detached buffer until completion" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const B = @import("buffers.zig");
+    const R = @import("resources.zig");
+    const FileResource = struct {
+        file: std.Io.File,
+        io: std.Io,
+        drops: *usize,
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.file.close(self.io);
+            self.drops.* += 1;
+        }
+    };
+    const F = struct {
+        fn read(scope: a.AsyncScope, resource: R.ResourceRef(FileResource), buffer: B.JsBuffer) !B.JsBuffer {
+            try AsyncGateTest.gate.wait(scope.io);
+            const bytes = try buffer.bytes();
+            _ = try resource.ptr().file.readPositionalAll(scope.io, bytes, 0);
+            return buffer.clone();
+        }
+    };
+    AsyncGateTest.gate.reset();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "retained.txt", .data = "retained" });
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &.{
+        a.decl("op_read_retained", F.read, .{}), ops.op("op_test_release", AsyncGateTest.release), ops.op("op_detach_buffer", BufferBindingTest.detach),
+    } });
+    defer rt.destroy(gpa);
+    const file = try tmp.dir.openFile(io, "retained.txt", .{});
+    _ = try rt.resources.add(try R.Resource.create(gpa, FileResource, .{ .file = file, .io = io, .drops = &drops }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///buffer-retained-io.js",
+        \\const c = Deno.core;
+        \\const storage = new ArrayBuffer(12), view = new Uint8Array(storage,2,8);
+        \\const pending = c.ops.op_read_retained(0, view);
+        \\c.close(0);
+        \\c.ops.op_detach_buffer(storage);
+        \\if (view.length !== 0) throw new Error('detach failed');
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\const result = await pending;
+        \\if (result.byteOffset !== 2 || result.length !== 8 || result.join() !== '114,101,116,97,105,110,101,100') throw new Error('retained I/O bytes');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), drops);
+    try std.testing.expectEqual(@as(usize, 0), rt.resources.len());
+}
+
+test "managed resource arguments clean up partial conversion failures" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const B = @import("buffers.zig");
+    const R = @import("resources.zig");
+    const Tracked = struct {
+        drops: *usize,
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.drops.* += 1;
+        }
+    };
+    const F = struct {
+        fn use(_: R.ResourceRef(Tracked), buffer: B.JsBuffer) u32 {
+            return @intCast(buffer.len);
+        }
+    };
+    const gpa = std.testing.allocator;
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        ops.op("op_use_resource_sync", F.use), a.decl("op_use_resource_async", F.use, .{}),
+    } });
+    defer rt.destroy(gpa);
+    _ = try rt.resources.add(try R.Resource.create(gpa, Tracked, .{ .drops = &drops }));
+    _ = try rt.resources.add(try R.Resource.create(gpa, struct {}, .{}));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///resource-binding-errors.js",
+        \\const c = Deno.core;
+        \\for (const op of [c.ops.op_use_resource_sync, c.ops.op_use_resource_async]) {
+        \\  try { await op(0, new Uint16Array(1)); throw new Error('invalid buffer accepted'); }
+        \\  catch (e) { if (!(e instanceof TypeError)) throw e; }
+        \\  for (const rid of [1, 999]) {
+        \\    try { await op(rid, new Uint8Array(0)); throw new Error('wrong resource accepted'); }
+        \\    catch (e) { if (!(e instanceof c.BadResource) || e.message !== 'Bad resource ID') throw e; }
+        \\  }
+        \\}
+        \\c.close(0); c.close(1);
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 1), drops);
+    try std.testing.expectEqual(@as(usize, 0), rt.async_driver.jobs.count());
+}
+
+test "retained backing stores and their allocator survive isolate disposal" {
+    v8.initForTesting();
+    const B = @import("buffers.zig");
+    const gpa = std.testing.allocator;
+    const first = try JsRuntime.create(gpa, std.testing.io, .{});
+    var first_alive = true;
+    defer if (first_alive) first.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    const value = try first.executeScript(gpa, "retain.js", "new Uint8Array([1,2,3,4]).subarray(1,3)", &exception);
+    var retained = try B.JsBuffer.fromV8(.{ .runtime = first, .isolate = first.isolate(), .context = first.context, .arena = gpa }, value);
+    defer retained.deinit();
+    first.destroy(gpa);
+    first_alive = false;
+    try std.testing.expectEqualSlices(u8, &.{ 2, 3 }, try retained.bytes());
+    const second = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer second.destroy(gpa);
+    const restored = try retained.toV8(.{ .runtime = second, .isolate = second.isolate(), .context = second.context, .arena = gpa });
+    try v8.setProperty(second.isolate(), second.context, v8.c.v8__Context__Global(second.context), "restoredBuffer", restored);
+    retained.deinit();
+    _ = try second.executeScript(gpa, "restore.js",
+        \\if (restoredBuffer.byteOffset !== 1 || restoredBuffer.join() !== '2,3') throw new Error('cross-isolate backing store');
+        \\restoredBuffer[0] = 42;
+    , &exception);
+}

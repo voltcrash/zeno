@@ -92,7 +92,7 @@ const CreateParams = extern struct {
     create_histogram_callback: ?*const anyopaque,
     add_histogram_sample_callback: ?*const anyopaque,
     array_buffer_allocator: ?*c.ArrayBufferAllocator,
-    array_buffer_allocator_shared: [2]usize,
+    array_buffer_allocator_shared: c.SharedArrayBufferAllocator,
     external_references: ?*const isize,
     allow_atomics_wait: bool,
     fatal_error_handler: ?*const anyopaque,
@@ -104,23 +104,23 @@ const CreateParams = extern struct {
 /// creation; `deinit` exits and disposes it.
 pub const OwnedIsolate = struct {
     isolate: *Isolate,
-    allocator: *c.ArrayBufferAllocator,
 
     pub fn init() OwnedIsolate {
         std.debug.assert(c.v8__Isolate__CreateParams__SIZEOF() == @sizeOf(CreateParams));
         var params: CreateParams = undefined;
         c.v8__Isolate__CreateParams__CONSTRUCT(&params);
-        const allocator = c.v8__ArrayBuffer__Allocator__NewDefaultAllocator();
-        params.array_buffer_allocator = allocator;
+        // V8 retains this shared allocator in each backing store. Retained
+        // buffers can therefore survive isolate disposal, as rusty_v8 permits.
+        params.array_buffer_allocator_shared = c.std__shared_ptr__v8__ArrayBuffer__Allocator__CONVERT__std__unique_ptr(c.v8__ArrayBuffer__Allocator__NewDefaultAllocator());
+        defer c.std__shared_ptr__v8__ArrayBuffer__Allocator__reset(&params.array_buffer_allocator_shared);
         const isolate = c.v8__Isolate__New(&params);
         c.v8__Isolate__Enter(isolate);
-        return .{ .isolate = isolate, .allocator = allocator };
+        return .{ .isolate = isolate };
     }
 
     pub fn deinit(self: OwnedIsolate) void {
         c.v8__Isolate__Exit(self.isolate);
         c.v8__Isolate__Dispose(self.isolate);
-        c.v8__ArrayBuffer__Allocator__DELETE(self.allocator);
     }
 };
 

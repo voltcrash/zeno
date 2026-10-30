@@ -67,6 +67,7 @@ pub const Resource = struct {
 
 pub fn ResourceRef(comptime T: type) type {
     return struct {
+        pub const ResourceType = T;
         resource: Resource,
 
         pub fn ptr(self: @This()) *T {

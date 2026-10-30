@@ -296,3 +296,30 @@ pub const Int32Array = opaque {};
 pub extern fn v8__Int32Array__New(buffer: *const ArrayBuffer, byte_offset: usize, length: usize) ?*const Int32Array;
 
 pub extern fn v8__Array__New_with_elements(isolate: *Isolate, elements: [*]const *const Value, length: usize) *const Array;
+
+// std::shared_ptr<BackingStore>, exposed by binding.cc as two pointer words.
+pub const SharedBackingStore = extern struct { words: [2]usize };
+pub const BackingStore = opaque {};
+pub const ArrayBufferView = opaque {};
+pub const SharedArrayBuffer = opaque {};
+pub extern fn v8__Value__IsUint8Array(self: *const Value) bool;
+pub extern fn v8__ArrayBufferView__Buffer(self: *const ArrayBufferView) ?*const ArrayBuffer;
+pub extern fn v8__ArrayBufferView__ByteOffset(self: *const ArrayBufferView) usize;
+pub extern fn v8__ArrayBufferView__ByteLength(self: *const ArrayBufferView) usize;
+pub extern fn v8__ArrayBuffer__ByteLength(self: *const ArrayBuffer) usize;
+pub extern fn v8__ArrayBuffer__GetBackingStore(self: *const ArrayBuffer) SharedBackingStore;
+pub extern fn v8__ArrayBuffer__New__with_backing_store(isolate: *Isolate, store: *const SharedBackingStore) *const ArrayBuffer;
+pub extern fn v8__ArrayBuffer__Detach(self: *const ArrayBuffer, key: ?*const Value) MaybeBool;
+pub extern fn v8__BackingStore__Data(self: *const BackingStore) ?*anyopaque;
+pub extern fn v8__BackingStore__ByteLength(self: *const BackingStore) usize;
+pub extern fn v8__BackingStore__IsShared(self: *const BackingStore) bool;
+pub extern fn std__shared_ptr__v8__BackingStore__COPY(self: *const SharedBackingStore) SharedBackingStore;
+pub extern fn std__shared_ptr__v8__BackingStore__get(self: *const SharedBackingStore) ?*const BackingStore;
+pub extern fn std__shared_ptr__v8__BackingStore__reset(self: *SharedBackingStore) void;
+pub extern fn std__shared_ptr__v8__BackingStore__use_count(self: *const SharedBackingStore) c_long;
+pub extern fn v8__SharedArrayBuffer__New__with_backing_store(isolate: *Isolate, store: *const SharedBackingStore) *const SharedArrayBuffer;
+pub extern fn v8__Function__NewInstance(self: *const Function, context: *const Context, argc: c_int, argv: [*]const *const Value) ?*const Object;
+
+pub const SharedArrayBufferAllocator = extern struct { words: [2]usize };
+pub extern fn std__shared_ptr__v8__ArrayBuffer__Allocator__CONVERT__std__unique_ptr(allocator: *ArrayBufferAllocator) SharedArrayBufferAllocator;
+pub extern fn std__shared_ptr__v8__ArrayBuffer__Allocator__reset(allocator: *SharedArrayBufferAllocator) void;
