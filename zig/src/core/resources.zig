@@ -1,9 +1,10 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
-//! Resource identity and ownership from `libs/core/io/resource_table.rs`.
+//! Resource ownership and I/O from `libs/core/io/{resource,resource_table}.rs`.
 //! Handles are reference counted on the runtime thread, like Rust's Rc.
 //! Closing a rid removes table ownership; outstanding operation handles can
 //! retain the value until their work finishes.
 const std = @import("std");
+pub const ByteView = @import("byte_view.zig").ByteView;
 
 pub const ResourceId = u32;
 pub const LookupError = error{BadResourceId};
@@ -16,6 +17,7 @@ const VTable = struct {
     close: *const fn (*Header) void,
     cancel_read: *const fn (*Header) void,
     read: *const fn (*Header, std.Io, []u8) anyerror!usize,
+    read_chunk: *const fn (*Header, std.Io, std.mem.Allocator, usize) anyerror!ByteView,
     write: *const fn (*Header, std.Io, []const u8) anyerror!usize,
     read_sync: *const fn (*Header, std.Io, []u8) anyerror!usize,
     write_sync: *const fn (*Header, std.Io, []const u8) anyerror!usize,
@@ -37,6 +39,8 @@ const Header = struct {
 /// read/readSync use []u8, write/writeSync use []const u8. writeAll takes
 /// []const u8 and returns !void; shutdown takes (*T, std.Io) and returns !void.
 /// sizeHint(*const T) returns SizeHint; it may be queried on an I/O worker.
+/// readChunk(*T, std.Io, Allocator, limit) returns an owned !ByteView. A
+/// resource can provide this instead of read, or override both paths.
 pub const Resource = struct {
     pub const ResourceType = void;
     header: *Header,
@@ -78,6 +82,11 @@ pub const Resource = struct {
     /// waits/locks so runtime shutdown can join blocked operations.
     pub fn read(self: Resource, io: std.Io, data: []u8) !usize {
         return self.header.vtable.read(self.header, io, data);
+    }
+    /// Read an owned chunk with at most limit bytes. Native pipes pass this
+    /// view directly to a sink; BYOB-only resources allocate their own chunk.
+    pub fn readChunk(self: Resource, io: std.Io, gpa: std.mem.Allocator, limit: usize) !ByteView {
+        return self.header.vtable.read_chunk(self.header, io, gpa, limit);
     }
     pub fn write(self: Resource, io: std.Io, data: []const u8) !usize {
         return self.header.vtable.write(self.header, io, data);
@@ -136,6 +145,7 @@ fn Impl(comptime T: type) type {
             .close = close,
             .cancel_read = cancelRead,
             .read = read,
+            .read_chunk = readChunk,
             .write = write,
             .read_sync = readSync,
             .write_sync = writeSync,
@@ -162,6 +172,31 @@ fn Impl(comptime T: type) type {
         }
         fn read(h: *Header, io: std.Io, data: []u8) !usize {
             if (@hasDecl(T, "read")) return node(h).value.read(io, data);
+            if (@hasDecl(T, "readChunk")) {
+                var chunk = try readChunk(h, io, std.heap.smp_allocator, data.len);
+                defer chunk.deinit();
+                @memcpy(data[0..chunk.len()], chunk.bytes());
+                return chunk.len();
+            }
+            return error.NotSupported;
+        }
+        fn readChunk(h: *Header, io: std.Io, gpa: std.mem.Allocator, limit: usize) !ByteView {
+            if (@hasDecl(T, "readChunk")) {
+                var chunk = try node(h).value.readChunk(io, gpa, limit);
+                if (chunk.len() > limit) {
+                    chunk.deinit();
+                    return error.InvalidReadCount;
+                }
+                return chunk;
+            }
+            if (@hasDecl(T, "read")) {
+                var chunk = try ByteView.alloc(gpa, limit);
+                errdefer chunk.deinit();
+                const n = try node(h).value.read(io, chunk.mutableBytes());
+                if (n > limit) return error.InvalidReadCount;
+                chunk.truncate(n);
+                return chunk;
+            }
             return error.NotSupported;
         }
         fn write(h: *Header, io: std.Io, data: []const u8) !usize {
@@ -271,6 +306,89 @@ pub const ResourceTable = struct {
 
 const TestCounts = struct { closes: usize = 0, cancels: usize = 0, drops: usize = 0 };
 
+const TestChunkSource = struct {
+    pending: ByteView,
+    pub fn readChunk(self: *@This(), _: std.Io, _: std.mem.Allocator, limit: usize) !ByteView {
+        return self.pending.splitTo(@min(limit, self.pending.len()));
+    }
+    pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+        self.pending.deinit();
+    }
+};
+
+test "source-owned chunks retain the source allocation and support BYOB fallback" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var retained: ByteView = .empty;
+    defer retained.deinit();
+    {
+        const resource = owned: {
+            var source = try ByteView.copy(gpa, "source owned bytes");
+            errdefer source.deinit();
+            break :owned try Resource.create(gpa, TestChunkSource, .{ .pending = source });
+        };
+        defer resource.deinit();
+        const held = try resource.downcast(TestChunkSource);
+        defer held.deinit();
+        const address = @intFromPtr(held.ptr().pending.bytes().ptr);
+        retained = try resource.readChunk(io, gpa, 6);
+        try std.testing.expectEqual(address, @intFromPtr(retained.bytes().ptr));
+        var buffer: [32]u8 = undefined;
+        const n = try resource.read(io, &buffer);
+        try std.testing.expectEqualStrings(" owned bytes", buffer[0..n]);
+        try std.testing.expectEqual(@as(usize, 0), try resource.read(io, &buffer));
+        try std.testing.expectError(error.NotSupported, resource.readSync(io, &buffer));
+    }
+    try std.testing.expectEqualStrings("source", retained.bytes());
+}
+
+fn chunkAllocationFailureExercise(gpa: std.mem.Allocator) !void {
+    const Reader = struct {
+        pub fn read(_: *@This(), _: std.Io, data: []u8) !usize {
+            const n = @min(data.len, 3);
+            @memcpy(data[0..n], "abc"[0..n]);
+            return n;
+        }
+    };
+    const resource = try Resource.create(gpa, Reader, .{});
+    defer resource.deinit();
+    var chunk = try resource.readChunk(std.testing.io, gpa, 8);
+    defer chunk.deinit();
+    try std.testing.expectEqualStrings("abc", chunk.bytes());
+}
+
+test "BYOB resources allocate chunks and release failed read allocations" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, chunkAllocationFailureExercise, .{});
+    const Failing = struct {
+        pub fn read(_: *@This(), _: std.Io, _: []u8) !usize {
+            return error.ReadFailure;
+        }
+    };
+    const resource = try Resource.create(std.testing.allocator, Failing, .{});
+    defer resource.deinit();
+    try std.testing.expectError(error.ReadFailure, resource.readChunk(std.testing.io, std.testing.allocator, 1024));
+}
+
+test "chunk overrides take priority and invalid counts release the chunk" {
+    const Override = struct {
+        pub fn read(_: *@This(), _: std.Io, _: []u8) !usize {
+            return error.ByobOverride;
+        }
+        pub fn readChunk(_: *@This(), _: std.Io, gpa: std.mem.Allocator, _: usize) !ByteView {
+            return ByteView.copy(gpa, "chunk override");
+        }
+    };
+    const gpa = std.testing.allocator;
+    const resource = try Resource.create(gpa, Override, .{});
+    defer resource.deinit();
+    var chunk = try resource.readChunk(std.testing.io, gpa, 32);
+    defer chunk.deinit();
+    try std.testing.expectEqualStrings("chunk override", chunk.bytes());
+    var data: [32]u8 = undefined;
+    try std.testing.expectError(error.ByobOverride, resource.read(std.testing.io, &data));
+    try std.testing.expectError(error.InvalidReadCount, resource.readChunk(std.testing.io, gpa, 1));
+}
+
 test "I/O defaults and partial write-all follow resource contracts" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -278,6 +396,7 @@ test "I/O defaults and partial write-all follow resource contracts" {
     defer empty.deinit();
     var data: [8]u8 = undefined;
     try std.testing.expectError(error.NotSupported, empty.read(io, &data));
+    try std.testing.expectError(error.NotSupported, empty.readChunk(io, gpa, data.len));
     try std.testing.expectError(error.NotSupported, empty.readSync(io, &data));
     try std.testing.expectError(error.NotSupported, empty.write(io, "x"));
     try std.testing.expectError(error.NotSupported, empty.writeSync(io, "x"));

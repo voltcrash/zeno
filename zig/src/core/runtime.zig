@@ -1679,6 +1679,53 @@ test "core read-all returns large and empty owned buffers after RID closure" {
     try std.testing.expectEqual(@as(usize, 0), rt.resources.len());
 }
 
+test "core read and read-all consume chunk-owned resources without a BYOB method" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const ChunkSource = struct {
+        pending: R.ByteView,
+        mutex: std.Io.Mutex = .init,
+        drops: *usize,
+        pub fn readChunk(self: *@This(), io: std.Io, _: std.mem.Allocator, limit: usize) !R.ByteView {
+            try AsyncGateTest.gate.wait(io);
+            try self.mutex.lock(io);
+            defer self.mutex.unlock(io);
+            return self.pending.splitTo(@min(limit, self.pending.len(), 3));
+        }
+        pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
+            self.pending.deinit();
+            self.drops.* += 1;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    AsyncGateTest.gate.reset();
+    var drops: usize = 0;
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &.{ops.op("op_test_release", AsyncGateTest.release)} });
+    defer rt.destroy(gpa);
+    const resource = owned: {
+        var source = try R.ByteView.copy(gpa, "source-owned bytes");
+        errdefer source.deinit();
+        break :owned try R.Resource.create(gpa, ChunkSource, .{ .pending = source, .drops = &drops });
+    };
+    _ = try rt.resources.add(resource);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///chunk-owned-reader.js",
+        \\const c = Deno.core, data = new Uint8Array(8);
+        \\const pending = c.read(0, data.subarray(2,6));
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\if (await pending !== 3 || data.join() !== '0,0,115,111,117,0,0,0') throw new Error('chunk BYOB range');
+        \\const rest = c.readAll(0);
+        \\c.close(0);
+        \\if (String.fromCharCode(...await rest) !== 'rce-owned bytes') throw new Error('chunk read-all');
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), drops);
+}
+
 test "worker-owned native byte results keep their original allocation in V8" {
     v8.initForTesting();
     const B = @import("buffers.zig");
