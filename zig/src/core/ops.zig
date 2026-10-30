@@ -9,7 +9,8 @@
 //! - Parameters: an optional leading `Scope`, then `bool`, `i32`, `u32`,
 //!   `f64`, `[]const u8` (the argument converted with `String()`, valid
 //!   during the call) or
-//!   `*const v8.Value`.
+//!   `*const v8.Value`, a retained buffer, or `ResourceRef(T)`. Managed
+//!   arguments are borrowed by the function and released by the binding.
 //! - Return types: `void`, `bool`, `i32`, `u32`, `f64`, `[]const u8` (copied
 //!   into a JS string) or `*const v8.Value`, optionally as an error union. An
 //!   error is thrown as a JS `Error` named after it.
@@ -65,11 +66,16 @@ fn Callback(comptime func: anytype) type {
 
             var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
             if (takes_scope) args[0] = scope;
+            var initialized: usize = 0;
+            defer inline for (js_params, 0..) |T, i| {
+                if (i < initialized) releaseArg(T.?, args[i + @intFromBool(takes_scope)]);
+            };
             inline for (js_params, 0..) |T, i| {
                 const value = c.v8__FunctionCallbackInfo__Get(cb_info, @intCast(i));
                 args[i + @intFromBool(takes_scope)] = fromV8(T.?, scope, value) catch |err| {
                     return throwError(scope, err);
                 };
+                initialized += 1;
             }
 
             const ret = @call(.auto, func, args);
@@ -78,6 +84,7 @@ fn Callback(comptime func: anytype) type {
                 ret catch |err| return throwError(scope, err)
             else
                 ret;
+            defer releaseArg(@TypeOf(value), value);
             const js = toV8(scope, value) catch |err| return throwError(scope, err);
             if (js) |v| {
                 var rv = c.v8__FunctionCallbackInfo__GetReturnValue(cb_info);
@@ -90,6 +97,14 @@ fn Callback(comptime func: anytype) type {
 pub const ConvertError = error{ OutOfMemory, JsException };
 
 pub fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertError!T {
+    if (comptime isBuffer(T)) return T.fromV8(scope, value);
+    if (comptime isResource(T)) {
+        const rid = try fromV8(u32, scope, value);
+        return scope.runtime.resources.get(T.ResourceType, rid) catch {
+            try throwCustomError(scope, "BadResource", "Bad resource ID");
+            return error.JsException;
+        };
+    }
     switch (T) {
         *const v8.Value => return value,
         bool => return c.v8__Value__BooleanValue(value, scope.isolate),
@@ -111,6 +126,7 @@ pub fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertErr
 
 pub fn toV8(scope: Scope, value: anytype) ConvertError!?*const v8.Value {
     const T = @TypeOf(value);
+    if (comptime isBuffer(T)) return try value.toV8(scope);
     return switch (T) {
         void => null,
         *const v8.Value => value,
@@ -121,6 +137,22 @@ pub fn toV8(scope: Scope, value: anytype) ConvertError!?*const v8.Value {
         []const u8, []u8 => @ptrCast(try v8.newString(scope.isolate, value)),
         else => @compileError("unsupported op return type: " ++ @typeName(T)),
     };
+}
+
+pub fn isBuffer(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "is_op_buffer");
+}
+
+pub fn isResource(comptime T: type) bool {
+    return @typeInfo(T) == .@"struct" and @hasDecl(T, "ResourceType");
+}
+
+/// Bindings own arguments and returned buffers; native bodies borrow args.
+pub fn releaseArg(comptime T: type, value: T) void {
+    if (comptime isBuffer(T)) {
+        var buffer = value;
+        buffer.deinit();
+    } else if (comptime isResource(T)) value.deinit();
 }
 
 /// Throw a Zig error into JS. `error.JsException` means an exception is
