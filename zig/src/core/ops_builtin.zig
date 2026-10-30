@@ -177,32 +177,32 @@ const Resource = @import("resources.zig").Resource;
 const JsBuffer = @import("buffers.zig").JsBuffer;
 
 fn opRead(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u32 {
-    return @intCast(try resource.read(scope.io, try buffer.bytes()));
+    return @intCast(try resource.read(scope, try buffer.bytes()));
 }
 fn opReadAll(scope: async_ops.AsyncScope, resource: Resource) !JsBuffer {
-    const data = try @import("resource_io.zig").readAll(std.heap.smp_allocator, scope.io, resource);
+    const data = try @import("resource_io.zig").readAll(scope, resource);
     return JsBuffer.fromOwnedSlice(data);
 }
 fn opPipe(scope: async_ops.AsyncScope, source: Resource, sink: Resource, cancel: @import("pipe_cancel.zig").PipeCancel) !void {
-    try @import("resource_io.zig").pipe(std.heap.smp_allocator, scope.io, source, sink, cancel.flag());
+    try @import("resource_io.zig").pipe(scope, source, sink, cancel.flag());
 }
 fn opWrite(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !u32 {
-    return @intCast(try resource.write(scope.io, try buffer.bytes()));
+    return @intCast(try resource.write(scope, try buffer.bytes()));
 }
 fn opWriteAll(scope: async_ops.AsyncScope, resource: Resource, buffer: JsBuffer) !void {
-    try resource.writeAll(scope.io, try buffer.bytes());
+    try resource.writeAll(scope, try buffer.bytes());
 }
 fn opWriteTypeError(scope: async_ops.AsyncScope, resource: Resource, message: []const u8) !void {
-    try resource.writeError(scope.io, @import("errors.zig").JsError.typeError(message));
+    try resource.writeError(scope, @import("errors.zig").JsError.typeError(message));
 }
 fn opShutdown(scope: async_ops.AsyncScope, resource: Resource) !void {
-    try resource.shutdown(scope.io);
+    try resource.shutdown(scope);
 }
 fn opReadSync(scope: Scope, resource: Resource, buffer: JsBuffer) !u32 {
-    return @intCast(try resource.readSync(scope.runtime.io, try buffer.bytes()));
+    return @intCast(try resource.readSync(scope.ioScope(), try buffer.bytes()));
 }
 fn opWriteSync(scope: Scope, resource: Resource, buffer: JsBuffer) !u32 {
-    return @intCast(try resource.writeSync(scope.runtime.io, try buffer.bytes()));
+    return @intCast(try resource.writeSync(scope.ioScope(), try buffer.bytes()));
 }
 fn opVoidAsync() void {}
 fn opErrorAsync() error{@"error"}!void {

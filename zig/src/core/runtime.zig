@@ -9,6 +9,7 @@ const v8 = @import("../v8/v8.zig");
 const ops = @import("ops.zig");
 const ops_builtin = @import("ops_builtin.zig");
 const modules = @import("modules.zig");
+const IoScope = @import("io_scope.zig").IoScope;
 
 /// Run right after the context is created, to set up what ops need
 /// (`CONTEXT_SETUP_SOURCES`).
@@ -1489,10 +1490,10 @@ const PipeBlockingResource = struct {
     mode: enum { ready, block_read, block_write },
     produced: bool = false,
     drops: *usize,
-    pub fn read(self: *@This(), io: std.Io, data: []u8) !usize {
+    pub fn read(self: *@This(), scope: IoScope, data: []u8) !usize {
         if (self.mode == .block_read) {
-            AsyncGateTest.entered.set(io);
-            try AsyncGateTest.gate.wait(io);
+            AsyncGateTest.entered.set(scope.io);
+            try AsyncGateTest.gate.wait(scope.io);
             return 0;
         }
         if (self.produced or data.len == 0) return 0;
@@ -1500,10 +1501,10 @@ const PipeBlockingResource = struct {
         self.produced = true;
         return 1;
     }
-    pub fn write(self: *@This(), io: std.Io, data: []const u8) !usize {
+    pub fn write(self: *@This(), scope: IoScope, data: []const u8) !usize {
         if (self.mode == .block_write) {
-            AsyncGateTest.entered.set(io);
-            try AsyncGateTest.gate.wait(io);
+            AsyncGateTest.entered.set(scope.io);
+            try AsyncGateTest.gate.wait(scope.io);
         }
         return data.len;
     }
@@ -1521,32 +1522,32 @@ const ResourceIoTest = struct {
     write_offset: u64 = 0,
     write_shutdown: bool = false,
 
-    pub fn read(self: *@This(), io: std.Io, data: []u8) !usize {
-        AsyncGateTest.entered.set(io);
-        try AsyncGateTest.gate.wait(io);
-        return self.readSync(io, data);
+    pub fn read(self: *@This(), scope: IoScope, data: []u8) !usize {
+        AsyncGateTest.entered.set(scope.io);
+        try AsyncGateTest.gate.wait(scope.io);
+        return self.readSync(scope, data);
     }
-    pub fn readSync(self: *@This(), io: std.Io, data: []u8) !usize {
-        try self.mutex.lock(io);
-        defer self.mutex.unlock(io);
-        const n = try self.file.readPositional(io, &.{data}, self.read_offset);
+    pub fn readSync(self: *@This(), scope: IoScope, data: []u8) !usize {
+        try self.mutex.lock(scope.io);
+        defer self.mutex.unlock(scope.io);
+        const n = try self.file.readPositional(scope.io, &.{data}, self.read_offset);
         self.read_offset += n;
         return n;
     }
-    pub fn write(self: *@This(), io: std.Io, data: []const u8) !usize {
-        return self.writeSync(io, data);
+    pub fn write(self: *@This(), scope: IoScope, data: []const u8) !usize {
+        return self.writeSync(scope, data);
     }
-    pub fn writeSync(self: *@This(), io: std.Io, data: []const u8) !usize {
-        try self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+    pub fn writeSync(self: *@This(), scope: IoScope, data: []const u8) !usize {
+        try self.mutex.lock(scope.io);
+        defer self.mutex.unlock(scope.io);
         if (self.write_shutdown) return error.WriteAfterShutdown;
-        const n = try self.file.writePositional(io, &.{data[0..@min(data.len, 3)]}, self.write_offset);
+        const n = try self.file.writePositional(scope.io, &.{data[0..@min(data.len, 3)]}, self.write_offset);
         self.write_offset += n;
         return n;
     }
-    pub fn shutdown(self: *@This(), io: std.Io) !void {
-        try self.mutex.lock(io);
-        defer self.mutex.unlock(io);
+    pub fn shutdown(self: *@This(), scope: IoScope) !void {
+        try self.mutex.lock(scope.io);
+        defer self.mutex.unlock(scope.io);
         self.write_shutdown = true;
     }
     pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
@@ -1933,8 +1934,8 @@ test "core writeTypeError retains the resource and borrowed message until comple
     const Capture = struct { data: [64]u8 = undefined, len: usize = 0, drops: usize = 0 };
     const ErrorResource = struct {
         capture: *Capture,
-        pub fn writeError(self: *@This(), io: std.Io, exception: R.JsError) !void {
-            try AsyncGateTest.gate.wait(io);
+        pub fn writeError(self: *@This(), scope: IoScope, exception: R.JsError) !void {
+            try AsyncGateTest.gate.wait(scope.io);
             if (!std.mem.eql(u8, exception.class_name, "TypeError")) return error.WrongErrorClass;
             @memcpy(self.capture.data[0..exception.message.len], exception.message);
             self.capture.len = exception.message.len;
@@ -1963,6 +1964,99 @@ test "core writeTypeError retains the resource and borrowed message until comple
     , &exception);
     try std.testing.expectEqualStrings("failure\x00message☃", capture.data[0..capture.len]);
     try std.testing.expectEqual(@as(usize, 1), capture.drops);
+}
+
+test "resource I/O preserves backend error payloads through sync, async and pipe adapters" {
+    v8.initForTesting();
+    const R = @import("resources.zig");
+    const E = @import("errors.zig");
+    const Backend = struct {
+        label: []const u8,
+        fn describe(scope: IoScope, label: []const u8, operation: []const u8) !E.JsError {
+            const properties = try scope.allocator.alloc(E.Property, 3);
+            properties[0] = .{ .name = "code", .value = .{ .string = "EACCES" } };
+            properties[1] = .{ .name = "operation", .value = .{ .string = operation } };
+            properties[2] = .{ .name = "resource", .value = .{ .string = label } };
+            return .{
+                .class_name = "PermissionDenied",
+                .message = try std.fmt.allocPrint(scope.allocator, "{s}:{s}", .{ label, operation }),
+                .properties = properties,
+            };
+        }
+        pub fn read(self: *@This(), scope: IoScope, _: []u8) !usize {
+            return scope.fail(try describe(scope, self.label, "read"));
+        }
+        pub fn readSync(self: *@This(), scope: IoScope, _: []u8) !usize {
+            return scope.fail(try describe(scope, self.label, "readSync"));
+        }
+        pub fn write(self: *@This(), scope: IoScope, _: []const u8) !usize {
+            return scope.fail(try describe(scope, self.label, "write"));
+        }
+        pub fn writeSync(self: *@This(), scope: IoScope, _: []const u8) !usize {
+            return scope.fail(try describe(scope, self.label, "writeSync"));
+        }
+        pub fn shutdown(self: *@This(), scope: IoScope) !void {
+            return scope.fail(try describe(scope, self.label, "shutdown"));
+        }
+        pub fn writeError(self: *@This(), scope: IoScope, exception: R.JsError) !void {
+            if (!std.mem.eql(u8, exception.class_name, "TypeError")) return error.WrongErrorClass;
+            return scope.fail(try describe(scope, self.label, "writeError"));
+        }
+    };
+    const ChunkBackend = struct {
+        pub fn readChunk(_: *@This(), scope: IoScope, _: usize) !R.ByteView {
+            return scope.fail(try Backend.describe(scope, "chunk", "readChunk"));
+        }
+    };
+    const Source = struct {
+        offset: usize = 0,
+        pub fn read(self: *@This(), _: IoScope, data: []u8) !usize {
+            const content = "pipe data";
+            const n = @min(data.len, content.len - self.offset);
+            @memcpy(data[0..n], content[self.offset..][0..n]);
+            self.offset += n;
+            return n;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    _ = try rt.resources.add(try R.Resource.create(gpa, Backend, .{ .label = "backend" }));
+    _ = try rt.resources.add(try R.Resource.create(gpa, ChunkBackend, .{}));
+    _ = try rt.resources.add(try R.Resource.create(gpa, Source, .{}));
+    _ = try rt.resources.add(try R.Resource.create(gpa, Backend, .{ .label = "sink" }));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///resource-error-payloads.js",
+        \\const c = Deno.core, data = new Uint8Array(3);
+        \\class Permission extends Error {}
+        \\c.registerErrorClass('PermissionDenied', Permission);
+        \\async function denied(operation,label,name) {
+        \\  let caught = false;
+        \\  try { await operation(); } catch (e) {
+        \\    if (!(e instanceof Permission) || e.message !== `${label}:${name}` || e.code !== 'EACCES' || e.operation !== name || e.resource !== label) throw new Error('backend payload lost');
+        \\    caught = true;
+        \\  }
+        \\  if (!caught) throw new Error('backend failure ignored');
+        \\}
+        \\await denied(() => c.readSync(0,data),'backend','readSync');
+        \\await denied(() => c.writeSync(0,data),'backend','writeSync');
+        \\await denied(() => c.read(0,data),'backend','read');
+        \\await denied(() => c.readAll(0),'backend','read');
+        \\await denied(() => c.write(0,data),'backend','write');
+        \\await denied(() => c.writeAll(0,data),'backend','write');
+        \\await denied(() => c.shutdown(0),'backend','shutdown');
+        \\await denied(() => c.writeTypeError(0,'input error'),'backend','writeError');
+        \\await denied(() => c.read(1,data),'chunk','readChunk');
+        \\await denied(() => c.readAll(1),'chunk','readChunk');
+        \\await denied(() => c.ops.op_pipe(0,3,null),'backend','read');
+        \\await denied(() => c.ops.op_pipe(1,3,null),'chunk','readChunk');
+        \\await denied(() => c.ops.op_pipe(2,3,null),'sink','write');
+        \\for (let rid=0;rid<4;++rid) c.close(rid);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
 }
 
 test "destroying a runtime cancels blocked resource I/O before final release" {
@@ -2013,7 +2107,7 @@ test "core read-all returns large and empty owned buffers after RID closure" {
     _ = try rt.resources.add(try R.Resource.create(gpa, ResourceIoTest, .{ .file = empty, .io = io, .drops = &drops, .read_offset = data.len }));
     const Failure = struct {
         offset: usize = 0,
-        pub fn read(self: *@This(), _: std.Io, bytes: []u8) !usize {
+        pub fn read(self: *@This(), _: IoScope, bytes: []u8) !usize {
             if (self.offset > 0) return error.ReadFailure;
             bytes[0] = 42;
             self.offset += 1;
@@ -2056,10 +2150,10 @@ test "core read and read-all consume chunk-owned resources without a BYOB method
         pending: R.ByteView,
         mutex: std.Io.Mutex = .init,
         drops: *usize,
-        pub fn readChunk(self: *@This(), io: std.Io, _: std.mem.Allocator, limit: usize) !R.ByteView {
-            try AsyncGateTest.gate.wait(io);
-            try self.mutex.lock(io);
-            defer self.mutex.unlock(io);
+        pub fn readChunk(self: *@This(), scope: IoScope, limit: usize) !R.ByteView {
+            try AsyncGateTest.gate.wait(scope.io);
+            try self.mutex.lock(scope.io);
+            defer self.mutex.unlock(scope.io);
             return self.pending.splitTo(@min(limit, self.pending.len(), 3));
         }
         pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
