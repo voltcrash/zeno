@@ -290,3 +290,7 @@ pub extern fn v8__Object__SetIndex(self: *const Object, context: *const Context,
 pub extern fn v8__ArrayBuffer__New__with_byte_length(isolate: *Isolate, byte_length: usize) *const ArrayBuffer;
 pub extern fn v8__ArrayBuffer__Data(self: *const ArrayBuffer) ?*anyopaque;
 pub extern fn v8__Uint8Array__New(buffer: *const ArrayBuffer, byte_offset: usize, length: usize) ?*const Uint8Array;
+
+pub extern fn v8__Isolate__HasPendingBackgroundTasks(isolate: *Isolate) bool;
+pub const Int32Array = opaque {};
+pub extern fn v8__Int32Array__New(buffer: *const ArrayBuffer, byte_offset: usize, length: usize) ?*const Int32Array;
