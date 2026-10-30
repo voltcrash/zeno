@@ -10,7 +10,8 @@ const ops = @import("ops.zig");
 const op = ops.op;
 const Scope = ops.Scope;
 
-pub const all = [_]ops.OpDecl{
+pub const all = @import("ops_builtin_types.zig").all ++ [_]ops.OpDecl{
+    op("op_str_byte_length", opStrByteLength),
     op("op_print", opPrint),
     op("op_get_extras_binding_object", opGetExtrasBindingObject),
     op("op_get_ext_import_meta_proto", opGetExtImportMetaProto),
@@ -36,4 +37,10 @@ fn opSetCapturedBootstrap(scope: Scope, value: *const v8.Value) void {
     const rt = scope.runtime;
     if (rt.captured_bootstrap) |old| old.deinit();
     rt.captured_bootstrap = .init(scope.isolate, value);
+}
+
+/// Like Rust, non-strings return zero without coercion.
+fn opStrByteLength(scope: Scope, value: *const v8.Value) u32 {
+    if (!c.v8__Value__IsString(value)) return 0;
+    return @intCast(c.v8__String__Utf8Length(@ptrCast(value), scope.isolate));
 }

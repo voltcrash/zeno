@@ -98,7 +98,8 @@ have no V8 for now.
   (`00_primordials.js`, `00_infra.js`, `02_timers.js`, `01_core.js`) unmodified.
   Ops are plain Zig functions; `ops.op` generates their V8 bindings from the
   function signature, like `#[op2]`. Only the built-in ops needed so far are
-  ported.
+  ported. V8 value predicates (`isMap`, `isTypedArray`, etc.) and
+  `op_str_byte_length` now match `ops_builtin_types.rs`.
 - **ES modules:** static imports from disk, `ext:core/mod.js`, the synthetic
   `ext:core/ops`, `import.meta.url`/`main`, and top-level await. Graphs are
   loaded synchronously. Dynamic `import()`, remote modules and TypeScript come
