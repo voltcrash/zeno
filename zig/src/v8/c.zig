@@ -21,6 +21,11 @@ pub const Message = opaque {};
 pub const MicrotaskQueue = opaque {};
 pub const FunctionCallbackInfo = opaque {};
 
+pub const Module = opaque {};
+pub const ModuleRequest = opaque {};
+pub const FixedArray = opaque {};
+pub const Promise = opaque {};
+pub const PromiseResolver = opaque {};
 pub const Primitive = opaque {};
 pub const Boolean = opaque {};
 pub const Number = opaque {};
@@ -40,6 +45,34 @@ pub const HandleScope = extern struct { _: [3]usize };
 pub const TryCatch = extern struct { _: [6]usize };
 /// `v8::ScriptOrigin`.
 pub const ScriptOrigin = extern struct { _: [5]usize };
+
+/// `v8::ScriptCompiler::Source`, mirroring rusty_v8's `script_compiler.rs`.
+pub const ScriptCompilerSource = extern struct {
+    source_string: usize,
+    resource_name: usize,
+    resource_line_offset: c_int,
+    resource_column_offset: c_int,
+    resource_options: c_int,
+    source_map_url: usize,
+    host_defined_options: usize,
+    cached_data: usize,
+    consume_cache_task: usize,
+    compile_hint_callback: usize,
+    compile_hint_callback_data: usize,
+    compilation_details: [3]usize,
+};
+
+pub const CompileOptions = enum(c_int) { no_compile_options = 0 };
+pub const NoCacheReason = enum(c_int) { no_reason = 0 };
+pub const ModuleStatus = enum(c_int) { uninstantiated, instantiating, instantiated, evaluating, evaluated, errored };
+pub const PromiseState = enum(c_int) { pending, fulfilled, rejected };
+
+// The callbacks below return a `MaybeLocal`, which is one pointer and
+// returned in a register everywhere except the Windows x64 ABI. The port
+// doesn't link V8 on Windows yet.
+pub const ResolveModuleCallback = *const fn (context: *const Context, specifier: *const String, import_attributes: *const FixedArray, referrer: *const Module) callconv(.c) ?*const Module;
+pub const SyntheticModuleEvaluationSteps = *const fn (context: *const Context, module: *const Module) callconv(.c) ?*const Value;
+pub const HostInitializeImportMetaObjectCallback = *const fn (context: *const Context, module: *const Module, meta: *const Object) callconv(.c) void;
 
 /// rusty_v8's `MaybeBool`.
 pub const MaybeBool = enum(u8) { just_false = 0, just_true = 1, nothing = 2 };
@@ -66,12 +99,14 @@ pub extern fn v8__Isolate__CreateParams__SIZEOF() usize;
 pub extern fn v8__Isolate__CreateParams__CONSTRUCT(buf: *anyopaque) void;
 pub extern fn v8__Isolate__New(params: *const anyopaque) *Isolate;
 pub extern fn v8__Isolate__Dispose(isolate: *Isolate) void;
+pub extern fn v8__Isolate__GetCurrent() *Isolate;
 pub extern fn v8__Isolate__Enter(isolate: *Isolate) void;
 pub extern fn v8__Isolate__Exit(isolate: *Isolate) void;
 pub extern fn v8__Isolate__GetCurrentContext(isolate: *Isolate) *const Context;
 pub extern fn v8__Isolate__PerformMicrotaskCheckpoint(isolate: *Isolate) void;
 pub extern fn v8__Isolate__SetData(isolate: *Isolate, slot: u32, data: ?*anyopaque) void;
 pub extern fn v8__Isolate__GetData(isolate: *Isolate, slot: u32) ?*anyopaque;
+pub extern fn v8__Isolate__SetHostInitializeImportMetaObjectCallback(isolate: *Isolate, callback: HostInitializeImportMetaObjectCallback) void;
 pub extern fn v8__Isolate__ThrowException(isolate: *Isolate, exception: *const Value) *const Value;
 
 pub extern fn v8__ArrayBuffer__Allocator__NewDefaultAllocator() *ArrayBufferAllocator;
@@ -125,6 +160,7 @@ pub extern fn v8__String__Utf8Length(self: *const String, isolate: *Isolate) c_i
 pub extern fn v8__String__WriteUtf8_v2(self: *const String, isolate: *Isolate, buffer: [*]u8, capacity: usize, flags: c_int, processed_characters_return: ?*usize) usize;
 pub extern fn v8__Object__Set(self: *const Object, context: *const Context, key: *const Value, value: *const Value) MaybeBool;
 pub extern fn v8__Object__New(isolate: *Isolate) *const Object;
+pub extern fn v8__Object__SetPrototype(self: *const Object, context: *const Context, prototype: *const Value) MaybeBool;
 pub extern fn v8__Object__Get(self: *const Object, context: *const Context, key: *const Value) ?*const Value;
 
 // Functions
@@ -154,3 +190,29 @@ pub extern fn v8__ScriptOrigin__CONSTRUCT(
 ) void;
 pub extern fn v8__Script__Compile(context: *const Context, source: *const String, origin: ?*const ScriptOrigin) ?*const Script;
 pub extern fn v8__Script__Run(script: *const Script, context: *const Context) ?*const Value;
+
+// Modules
+pub extern fn v8__ScriptCompiler__Source__CONSTRUCT(buf: *ScriptCompilerSource, source_string: *const String, origin: ?*const ScriptOrigin, cached_data: ?*anyopaque) void;
+pub extern fn v8__ScriptCompiler__Source__DESTRUCT(self: *ScriptCompilerSource) void;
+pub extern fn v8__ScriptCompiler__CompileModule(isolate: *Isolate, source: *ScriptCompilerSource, options: CompileOptions, no_cache_reason: NoCacheReason) ?*const Module;
+pub extern fn v8__Module__GetStatus(self: *const Module) ModuleStatus;
+pub extern fn v8__Module__GetException(self: *const Module) *const Value;
+pub extern fn v8__Module__GetModuleRequests(self: *const Module) *const FixedArray;
+pub extern fn v8__Module__GetModuleNamespace(self: *const Module) *const Value;
+pub extern fn v8__Module__GetIdentityHash(self: *const Module) c_int;
+pub extern fn v8__Module__InstantiateModule(self: *const Module, context: *const Context, cb: ResolveModuleCallback, source_callback: ?*const anyopaque) MaybeBool;
+pub extern fn v8__Module__Evaluate(self: *const Module, context: *const Context) ?*const Value;
+pub extern fn v8__Module__CreateSyntheticModule(isolate: *Isolate, module_name: *const String, export_names_len: usize, export_names_raw: [*]const *const String, evaluation_steps: SyntheticModuleEvaluationSteps) *const Module;
+pub extern fn v8__Module__SetSyntheticModuleExport(self: *const Module, isolate: *Isolate, export_name: *const String, export_value: *const Value) MaybeBool;
+pub extern fn v8__ModuleRequest__GetSpecifier(self: *const ModuleRequest) *const String;
+pub extern fn v8__FixedArray__Length(self: *const FixedArray) c_int;
+pub extern fn v8__FixedArray__Get(self: *const FixedArray, index: c_int) *const Data;
+
+// Promises
+pub extern fn v8__Promise__Resolver__New(context: *const Context) ?*const PromiseResolver;
+pub extern fn v8__Promise__Resolver__GetPromise(self: *const PromiseResolver) *const Promise;
+pub extern fn v8__Promise__Resolver__Resolve(self: *const PromiseResolver, context: *const Context, value: *const Value) MaybeBool;
+pub extern fn v8__Promise__State(self: *const Promise) PromiseState;
+pub extern fn v8__Promise__Result(self: *const Promise) *const Value;
+pub extern fn v8__Promise__MarkAsHandled(self: *const Promise) void;
+pub extern fn v8__Value__IsPromise(self: *const Value) bool;

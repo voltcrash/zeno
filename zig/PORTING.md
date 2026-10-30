@@ -65,6 +65,9 @@ have no V8 for now.
 | `src/cli/help.zig`     | `libs/cli_parser/src/help.rs`                 |
 | `src/v8/`              | the `v8` crate (rusty_v8)                     |
 | `src/core/runtime.zig` | `libs/core/runtime/jsruntime.rs`              |
+| `src/core/modules.zig` | `libs/core/modules` (`ModuleMap`)             |
+| `src/core/url.zig`     | `resolve_import` (interim URL handling)       |
+| `src/tools/run.zig`    | `cli/tools/run/mod.rs` (`run_script`)         |
 | `src/tools/eval.zig`   | `cli/tools/run/mod.rs` (`eval_command`)       |
 | `src/cli/golden/`      | help output of the Rust parser (generated)    |
 
@@ -96,10 +99,16 @@ have no V8 for now.
   Ops are plain Zig functions; `ops.op` generates their V8 bindings from the
   function signature, like `#[op2]`. Only the built-in ops needed so far are
   ported.
-- **`deno eval`** runs code and supports `--print`. Uncaught exceptions print
-  with their stack trace and exit with code 1. For now the code runs as a
-  classic script with a temporary native `console` that formats values with
-  `String()`.
+- **ES modules:** static imports from disk, `ext:core/mod.js`, the synthetic
+  `ext:core/ops`, `import.meta.url`/`main`, and top-level await. Graphs are
+  loaded synchronously. Dynamic `import()`, remote modules and TypeScript come
+  later. Specifiers resolve with a small interim URL module until `ext/url`'s
+  WHATWG parser is ported.
+- **`deno run <script.js>`** (and bare `deno script.js`) runs JavaScript
+  modules. **`deno eval`** runs code as the module `./$deno$eval.mts` and
+  supports `--print`. Uncaught exceptions print with their stack trace and exit
+  with code 1. `console` is still a temporary native one that formats values
+  with `String()`, and there is no `Deno` namespace beyond `Deno.core`.
 - Every other subcommand exits with "has not been ported to Zig yet".
 
 Next in phase 3: ES modules (`ext:core/mod.js`, `deno eval` as a module), async

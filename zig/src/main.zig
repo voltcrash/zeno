@@ -37,9 +37,18 @@ pub fn main(init: std.process.Init) !u8 {
                 try @import("tools/eval.zig").run(init.gpa, io, &parsed.result, err)
             else
                 try noV8(err),
+            .run => if (!build_options.have_v8)
+                try noV8(err)
+            else if (parsed.result.getOne("script_arg")) |script|
+                try @import("tools/run.zig").run(init.gpa, io, script, err)
+            else
+                try notPorted(err, "run (without a script)"),
             else => try notPorted(err, cmd.name),
         },
-        .default_run => try notPorted(err, "run"),
+        .default_run => |script| if (build_options.have_v8)
+            try @import("tools/run.zig").run(init.gpa, io, script, err)
+        else
+            try noV8(err),
         .default_repl => try notPorted(err, "repl"),
     };
     try err.flush();
@@ -75,6 +84,8 @@ test {
     if (build_options.have_v8) {
         _ = @import("core/runtime.zig");
         _ = @import("core/ops.zig");
+        _ = @import("core/url.zig");
+        _ = @import("core/modules.zig");
         _ = @import("v8/v8.zig");
     }
     _ = help;

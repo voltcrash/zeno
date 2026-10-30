@@ -8,12 +8,15 @@ const std = @import("std");
 const v8 = @import("../v8/v8.zig");
 const ops = @import("ops.zig");
 const ops_builtin = @import("ops_builtin.zig");
+const modules = @import("modules.zig");
 
 /// Run right after the context is created, to set up what ops need
 /// (`CONTEXT_SETUP_SOURCES`).
 const context_setup_sources = [_][]const u8{ "00_primordials.js", "00_infra.js" };
 /// Run once ops are bound (`BUILTIN_SOURCES`).
 const builtin_sources = [_][]const u8{ "02_timers.js", "01_core.js" };
+/// Evaluated after the builtin sources (`BUILTIN_ES_MODULES`).
+const builtin_es_modules = [_][]const u8{"mod.js"};
 
 pub const JsRuntime = struct {
     owned: v8.OwnedIsolate,
@@ -26,6 +29,7 @@ pub const JsRuntime = struct {
     ext_import_meta_proto: v8.Global(v8.Object),
     /// The bootstrap object captured by `01_core.js`.
     captured_bootstrap: ?v8.Global(v8.Value) = null,
+    modules: modules.ModuleMap,
 
     pub const CreateError = error{ OutOfMemory, JsException, CoreBootstrapFailed };
 
@@ -46,9 +50,11 @@ pub const JsRuntime = struct {
             .gpa = gpa,
             .io = io,
             .ext_import_meta_proto = undefined,
+            .modules = .init(gpa),
         };
         const iso = self.owned.isolate;
         v8.c.v8__Isolate__SetData(iso, ops.runtime_slot, self);
+        v8.c.v8__Isolate__SetHostInitializeImportMetaObjectCallback(iso, modules.ModuleMap.initializeImportMeta);
         self.scope.init(iso);
         self.context = v8.newContext(iso);
         v8.c.v8__Context__Enter(self.context);
@@ -59,6 +65,7 @@ pub const JsRuntime = struct {
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        self.modules.deinit();
         if (self.captured_bootstrap) |g| g.deinit();
         self.ext_import_meta_proto.deinit();
         v8.c.v8__Context__Exit(self.context);
@@ -90,6 +97,39 @@ pub const JsRuntime = struct {
         try ops.install(scope, core_ops, &ops_builtin.all);
         try ops.install(scope, core_ops, extra_ops);
         inline for (builtin_sources) |name| try self.runCoreSource(name);
+
+        // `ext:core/ops` exports every op.
+        var exports: std.ArrayList(modules.Source.Export) = .empty;
+        const arena = self.modules.arena.allocator();
+        for ([_][]const ops.OpDecl{ &ops_builtin.all, extra_ops }) |decls| {
+            for (decls) |decl| {
+                const f = try v8.getProperty(iso, ctx, core_ops, decl.name);
+                try exports.append(arena, .{ .name = decl.name, .value = .init(iso, f) });
+            }
+        }
+        try self.modules.addBuiltin("ext:core/ops", .{ .synthetic = exports.items });
+        inline for (builtin_es_modules) |name| {
+            const specifier = "ext:core/" ++ name;
+            try self.modules.addBuiltin(specifier, .{ .code = @embedFile(specifier) });
+            var exception: ?[]u8 = null;
+            self.executeModule(specifier, &exception) catch |err| {
+                if (exception) |e| {
+                    std.log.err("failed to evaluate {s}: {s}", .{ specifier, e });
+                    self.gpa.free(e);
+                }
+                return if (err == error.OutOfMemory) error.OutOfMemory else error.CoreBootstrapFailed;
+            };
+        }
+    }
+
+    /// Load and evaluate a (non-main) module.
+    fn executeModule(self: *JsRuntime, specifier: []const u8, exception: *?[]u8) ExecuteError!void {
+        var try_catch: v8.TryCatch = undefined;
+        try_catch.init(self.isolate());
+        defer try_catch.deinit();
+        var thrown: ?*const v8.Value = null;
+        const module = self.modules.load(self, specifier, null, false) catch |err| return self.moduleError(self.gpa, err, &try_catch, null, exception);
+        self.modules.evaluate(self, module, &thrown) catch |err| return self.moduleError(self.gpa, err, &try_catch, thrown, exception);
     }
 
     fn runCoreSource(self: *JsRuntime, comptime name: []const u8) CreateError!void {
@@ -126,7 +166,56 @@ pub const JsRuntime = struct {
         return self.owned.isolate;
     }
 
-    pub const ExecuteError = v8.Error;
+    /// The runtime that owns `iso`, for V8 callbacks.
+    pub fn fromIsolate(iso: *v8.Isolate) *JsRuntime {
+        return @ptrCast(@alignCast(v8.c.v8__Isolate__GetData(iso, ops.runtime_slot).?));
+    }
+
+    /// Load `specifier` as the main module and evaluate it. `code` is its
+    /// source if it's in memory; otherwise it is read from its URL. On
+    /// failure, `exception` describes the error (allocated with `gpa`).
+    pub fn executeMainModule(self: *JsRuntime, gpa: std.mem.Allocator, specifier: []const u8, code: ?[]const u8, exception: *?[]u8) ExecuteError!void {
+        const iso = self.isolate();
+        var try_catch: v8.TryCatch = undefined;
+        try_catch.init(iso);
+        defer try_catch.deinit();
+
+        var thrown: ?*const v8.Value = null;
+        const module = self.modules.load(self, specifier, code, true) catch |err| return self.moduleError(gpa, err, &try_catch, null, exception);
+        self.modules.evaluate(self, module, &thrown) catch |err| return self.moduleError(gpa, err, &try_catch, thrown, exception);
+    }
+
+    fn moduleError(self: *JsRuntime, gpa: std.mem.Allocator, err: modules.LoadError, try_catch: *const v8.TryCatch, thrown: ?*const v8.Value, exception: *?[]u8) ExecuteError {
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.ModuleNotFound, error.ResolutionFailed => {
+                exception.* = try gpa.dupe(u8, self.modules.last_error orelse @errorName(err));
+                return error.ModuleLoadFailed;
+            },
+            error.JsException => {
+                const value = thrown orelse
+                    (if (try_catch.hasCaught()) try_catch.stackTrace(self.context) orelse try_catch.exception() else null);
+                exception.* = if (value) |v|
+                    try self.describeException(gpa, v)
+                else
+                    try gpa.dupe(u8, "Top-level await promise never resolved");
+                return error.JsException;
+            },
+        }
+    }
+
+    /// An exception's stack trace if it has one, else `String(exception)`.
+    fn describeException(self: *JsRuntime, gpa: std.mem.Allocator, exception: *const v8.Value) v8.Error![]u8 {
+        const iso = self.isolate();
+        if (v8.c.v8__Value__IsObject(exception)) {
+            if (v8.getProperty(iso, self.context, @ptrCast(exception), "stack")) |stack| {
+                if (v8.c.v8__Value__IsString(stack)) return v8.toUtf8(gpa, iso, self.context, stack);
+            } else |_| {}
+        }
+        return v8.toUtf8(gpa, iso, self.context, exception);
+    }
+
+    pub const ExecuteError = v8.Error || error{ModuleLoadFailed};
 
     /// Run a classic script. On an uncaught exception, returns
     /// `error.JsException` and sets `exception` to its description (the
@@ -137,7 +226,7 @@ pub const JsRuntime = struct {
         name: []const u8,
         source: []const u8,
         exception: *?[]u8,
-    ) ExecuteError!*const v8.Value {
+    ) v8.Error!*const v8.Value {
         const iso = self.isolate();
         var try_catch: v8.TryCatch = undefined;
         try_catch.init(iso);
@@ -254,4 +343,55 @@ test "libs/core's JavaScript is loaded" {
     defer gpa.free(s);
     try std.testing.expectEqualStrings("function,function,function,function,true", s);
     try std.testing.expect(rt.captured_bootstrap != null);
+}
+
+test "ES modules" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep.js", .data = "export const answer = 42;\nexport const meta = import.meta.url;\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.js", .data =
+        \\import { answer, meta } from "./dep.js";
+        \\import { op_print } from "ext:core/ops";
+        \\import { core, primordials } from "ext:core/mod.js";
+        \\globalThis.result = [answer, meta.endsWith("/dep.js"), import.meta.main,
+        \\  op_print === Deno.core.ops.op_print, typeof core.print,
+        \\  typeof primordials.ArrayPrototypeMap, await Promise.resolve("tla")].join();
+        \\
+    });
+    const dir = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(dir);
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const main_url = try @import("url.zig").fromFilePath(arena, try std.fmt.allocPrint(arena, "{s}/main.js", .{dir}));
+
+    const rt = try JsRuntime.create(gpa, io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, main_url, null, &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception.?});
+        return err;
+    };
+    const v = try rt.executeScript(gpa, "test.js", "globalThis.result", &exception);
+    const s = try v8.toUtf8(gpa, rt.isolate(), rt.context, v);
+    defer gpa.free(s);
+    try std.testing.expectEqualStrings("42,true,true,true,function,function,tla", s);
+
+    // Errors: a throwing module, a missing module, a bare specifier.
+    const cases = [_][2][]const u8{
+        .{ "throw new RangeError('nope')", "RangeError: nope\n    at file:///x/a.js:1:7" },
+        .{ "await Promise.reject(new Error('async nope'))", "Error: async nope\n    at file:///x/b.js:1:22" },
+        .{ "import './missing.js'", "Module not found \"file:///x/missing.js\"." },
+        .{ "import 'lodash'", "Relative import path \"lodash\" not prefixed with / or ./ or ../ from \"file:///x/d.js\"" },
+    };
+    for (cases, [_][]const u8{ "file:///x/a.js", "file:///x/b.js", "file:///x/c.js", "file:///x/d.js" }) |case, spec| {
+        try std.testing.expect(std.meta.isError(rt.executeMainModule(gpa, spec, case[0], &exception)));
+        try std.testing.expect(std.mem.startsWith(u8, exception.?, case[1]));
+        gpa.free(exception.?);
+        exception = null;
+    }
 }
