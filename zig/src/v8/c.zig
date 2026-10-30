@@ -268,3 +268,25 @@ pub extern fn v8__Value__IsTypedArray(self: *const Value) bool;
 pub extern fn v8__Value__IsWeakMap(self: *const Value) bool;
 
 pub extern fn v8__Value__IsWeakSet(self: *const Value) bool;
+
+// Rejection tracking and core's shared tick counters.
+pub const PromiseRejectEvent = enum(c_int) {
+    reject_with_no_handler = 0,
+    handler_added_after_reject = 1,
+    reject_after_resolved = 2,
+    resolve_after_resolved = 3,
+};
+pub const PromiseRejectMessage = extern struct { words: [3]usize };
+pub const ArrayBuffer = opaque {};
+pub const Uint8Array = opaque {};
+pub extern fn v8__Isolate__SetPromiseRejectCallback(isolate: *Isolate, callback: *const fn (PromiseRejectMessage) callconv(.c) void) void;
+pub extern fn v8__PromiseRejectMessage__GetEvent(self: *const PromiseRejectMessage) PromiseRejectEvent;
+pub extern fn v8__PromiseRejectMessage__GetPromise(self: *const PromiseRejectMessage) *const Promise;
+pub extern fn v8__PromiseRejectMessage__GetValue(self: *const PromiseRejectMessage) ?*const Value;
+pub extern fn v8__Context__GetContinuationPreservedEmbedderData(isolate: *Isolate) *const Value;
+pub extern fn v8__Value__StrictEquals(self: *const Value, that: *const Value) bool;
+pub extern fn v8__Array__New(isolate: *Isolate, length: c_int) *const Array;
+pub extern fn v8__Object__SetIndex(self: *const Object, context: *const Context, index: u32, value: *const Value) MaybeBool;
+pub extern fn v8__ArrayBuffer__New__with_byte_length(isolate: *Isolate, byte_length: usize) *const ArrayBuffer;
+pub extern fn v8__ArrayBuffer__Data(self: *const ArrayBuffer) ?*anyopaque;
+pub extern fn v8__Uint8Array__New(buffer: *const ArrayBuffer, byte_offset: usize, length: usize) ?*const Uint8Array;
