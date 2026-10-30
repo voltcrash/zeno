@@ -140,5 +140,15 @@ have no V8 for now.
   `BadResource` class. Resource-backed I/O ops and runtime stdio registration
   are still to be ported.
 
-Next in phase 3: async ops, resource-backed I/O and unified I/O/platform
-wakeups, then remaining built-in ops.
+- **Async ops:** `src/core/async_ops.zig` declares native ops with eager,
+  deferred or lazy completion, wrapped by the existing `00_infra.js` promise
+  stubs. Nonblocking ready bodies can run inline; concurrent bodies receive
+  native scalar/string arguments and an `AsyncScope` with I/O and an owned
+  result arena. Workers never receive V8 handles. Completions wake the event
+  loop and resolve promises on its thread. Ref/unref controls liveness;
+  cancellation and shutdown join each owned future before freeing its data.
+  The core async add/void/error test ops are ported. Buffer/resource argument
+  bindings, resource-backed I/O ops, metrics and fast calls remain to be ported.
+
+Next in phase 3: buffer/resource async bindings, resource-backed I/O and unified
+I/O/platform wakeups, then remaining built-in ops.

@@ -31,6 +31,8 @@ pub const JsRuntime = struct {
     captured_bootstrap: ?v8.Global(v8.Value) = null,
     modules: modules.ModuleMap,
     resources: @import("resources.zig").ResourceTable,
+    async_driver: @import("async_ops.zig").Driver,
+    event_loop_tick: ?v8.Global(v8.c.Function) = null,
     timers: @import("timers.zig").Timers,
     process_timers: ?v8.Global(v8.c.Function) = null,
     dispatched_exception: ?v8.Global(v8.Value) = null,
@@ -64,6 +66,7 @@ pub const JsRuntime = struct {
             .ext_import_meta_proto = undefined,
             .modules = .init(gpa),
             .resources = .init(gpa),
+            .async_driver = .init(gpa, io),
             .timers = .init(io),
         };
         const iso = self.owned.isolate;
@@ -91,6 +94,8 @@ pub const JsRuntime = struct {
     }
 
     pub fn destroy(self: *JsRuntime, gpa: std.mem.Allocator) void {
+        self.async_driver.deinit();
+        if (self.event_loop_tick) |f| f.deinit();
         self.resources.deinit();
         self.exceptions.deinit(gpa);
         if (self.tick_buffer) |b| b.deinit();
@@ -140,6 +145,7 @@ pub const JsRuntime = struct {
         const view = v8.c.v8__Uint8Array__New(buffer, 0, 2) orelse return error.OutOfMemory;
         const setter = try v8.getProperty(iso, ctx, core, "__setTickInfo");
         _ = v8.c.v8__Function__Call(@ptrCast(setter), ctx, @ptrCast(v8.c.v8__Undefined(iso)), 1, &.{@ptrCast(view)}) orelse return error.JsException;
+        self.event_loop_tick = .init(iso, @ptrCast(try v8.getProperty(iso, ctx, core, "__eventLoopTick")));
         self.drain_ticks = .init(iso, @ptrCast(try v8.getProperty(iso, ctx, core, "__drainNextTickAndMacrotasks")));
         v8.c.v8__Isolate__SetPromiseRejectCallback(iso, @import("exceptions.zig").ExceptionState.promiseRejectCallback);
 
@@ -258,12 +264,13 @@ pub const JsRuntime = struct {
         }
     }
 
-    /// Drive timers, nextTicks, immediates and V8 tasks. Async ops and I/O
-    /// readiness are integrated as their native implementations are ported.
+    /// Drive timers, native op completions, nextTicks, immediates and V8
+    /// tasks. Resource-backed I/O methods follow as extensions are ported.
     pub fn runEventLoop(self: *JsRuntime, main_promise: ?*const v8.c.Promise, thrown: *?*const v8.Value) v8.Error!void {
         const c = v8.c;
         const iso = self.isolate();
         const platform = v8.Platform.current();
+        const event_loop_tick = if (self.event_loop_tick) |f| f.get(iso) else null;
         const drain = if (self.drain_ticks) |f| f.get(iso) else null;
         const immediates = if (self.run_immediates) |f| f.get(iso) else null;
         var carried_work = false;
@@ -281,10 +288,11 @@ pub const JsRuntime = struct {
                 if (deadline <= self.timers.now(self.io)) {
                     try self.dispatchTimers();
                     did_work = true;
-                    try self.drainTicks(drain);
-                    try self.checkEventLoopException(main_promise, thrown);
                 }
             }
+            if (event_loop_tick) |f| did_work = (try self.async_driver.dispatchReady(self, f)) or did_work;
+            try self.drainTicks(drain);
+            try self.checkEventLoopException(main_promise, thrown);
 
             // Like Rust's check phase, unrefed immediates participate only
             // when actual work drove this iteration. A future refed timer
@@ -300,6 +308,21 @@ pub const JsRuntime = struct {
             if (self.immediate_refed) continue;
 
             const background = c.v8__Isolate__HasPendingBackgroundTasks(iso);
+            const live_timer = self.timers.refed and self.timers.deadline_ms != null;
+            const live_ops = self.async_driver.refed_count > 0;
+            if (self.async_driver.jobs.count() != 0 and (live_ops or live_timer or background)) {
+                // Unrefed ops participate in an otherwise-live loop too.
+                // Worker completions wake this wait; a timeout keeps V8's
+                // default platform responsive until its custom runner lands.
+                const timeout: std.Io.Timeout = if (background)
+                    .{ .duration = .{ .raw = .{ .nanoseconds = std.time.ns_per_ms }, .clock = .awake } }
+                else if (self.timers.refed and self.timers.deadline_ms != null)
+                    .{ .deadline = self.timers.start.addDuration(.{ .nanoseconds = @intFromFloat(self.timers.deadline_ms.? * std.time.ns_per_ms) }).withClock(.awake) }
+                else
+                    .none;
+                self.async_driver.wait(timeout);
+                continue;
+            }
             if (background) {
                 if (self.timers.refed and self.timers.deadline_ms != null) {
                     // The default platform has no timed PumpMessageLoop.
@@ -759,8 +782,9 @@ test "unhandled rejections and tick errors reach the runtime" {
         "Promise.reject(undefined)",
         "Deno.core.queueNextTick({callback() { throw new Error('tick boom'); }})",
         "Deno.core.createTimer(() => Promise.reject('timer rejection'), 1, undefined, false, true, false)",
+        "Deno.core.ops.op_error_async_deferred()",
     };
-    for (sources, [_][]const u8{ "TypeError: unhandled", "undefined", "Error: tick boom", "timer rejection" }, [_]bool{ true, true, false, true }) |source, expected, is_promise| {
+    for (sources, [_][]const u8{ "TypeError: unhandled", "undefined", "Error: tick boom", "timer rejection", "Error: error" }, [_]bool{ true, true, false, true, true }) |source, expected, is_promise| {
         const rt = try JsRuntime.create(gpa, std.testing.io, .{});
         defer rt.destroy(gpa);
         var exception: ?[]u8 = null;
@@ -1090,5 +1114,238 @@ test "resource snapshots preserve Rust's RID ordering through replacement" {
         \\const rows = Deno.core.ops.op_resources();
         \\if (rows.map(row => row[0]).join() !== '0,2,3,4,5,6,7,8') throw new Error('RID order');
         \\if (Deno.core.resources()[2] !== 'replacement') throw new Error('replacement name');
+    , &exception);
+}
+
+test "async ops preserve eager, deferred and lazy promise semantics" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        var calls: usize = 0;
+        fn lazy(value: i32) i32 {
+            calls += 1;
+            return value * 2;
+        }
+    };
+    F.calls = 0;
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{a.decl("op_test_lazy", F.lazy, .{ .execution = .inline_ready, .scheduling = .lazy })} });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    _ = try rt.executeScript(gpa, "async-start.js",
+        \\const c = Deno.core, o = c.ops, id = c.promiseIdSymbol;
+        \\globalThis.trace = [];
+        \\const eager = o.op_add_async(20, 22);
+        \\if (id in eager || o.op_add_async.length !== 2) throw new Error('eager protocol');
+        \\eager.then(() => trace.push('eager'));
+        \\Promise.resolve().then(() => trace.push('microtask'));
+        \\const deferred = o.op_void_async_deferred();
+        \\if (!c.hasPromise(deferred[id])) throw new Error('deferred promise missing');
+        \\deferred.then(() => trace.push('deferred'));
+        \\const lazy = o.op_test_lazy(21);
+        \\lazy.then(() => trace.push('lazy'));
+        \\globalThis.allOps = Promise.all([eager, deferred, lazy, o.op_void_async(),
+        \\  o.op_error_async().catch(e => e.message), o.op_error_async_deferred().catch(e => e.message),
+        \\  o.op_add_async(0x7fffffff, 1)]);
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 0), F.calls);
+    rt.executeMainModule(gpa, "file:///async-finish.js",
+        \\const values = await allOps;
+        \\if (JSON.stringify(values) !== '[42,null,42,null,"error","error",-2147483648]') throw new Error('async results');
+        \\if (trace.join() !== 'eager,microtask,deferred,lazy') throw new Error('async ordering: ' + trace);
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 1), F.calls);
+    try std.testing.expectEqual(@as(usize, 0), rt.async_driver.jobs.count());
+}
+
+test "async op promise IDs wrap and spill beyond the JS ring" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///async-ids.js",
+        \\const c = Deno.core;
+        \\c.__setNextPromiseId(0x7fffffff);
+        \\const promises = Array.from({length: 4200}, () => c.ops.op_void_async_deferred());
+        \\if (promises[0][c.promiseIdSymbol] !== 0x7fffffff || promises[1][c.promiseIdSymbol] !== 0) throw new Error('ID wrap');
+        \\const values = await Promise.all(promises);
+        \\if (!values.every(v => v === null)) throw new Error('ring spill');
+        \\if (promises.some(p => c.hasPromise(p[c.promiseIdSymbol]))) throw new Error('promise retained');
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 0), rt.async_driver.refed_count);
+    try std.testing.expectEqual(@as(usize, 0), rt.async_driver.jobs.count());
+}
+
+const AsyncGateTest = struct {
+    var gate: std.Io.Event = .unset;
+    var entered: std.Io.Event = .unset;
+    var canceled: std.atomic.Value(bool) = .init(false);
+    fn wait(scope: @import("async_ops.zig").AsyncScope, text: []const u8) ![]const u8 {
+        entered.set(scope.io);
+        gate.wait(scope.io) catch |err| {
+            canceled.store(true, .release);
+            return err;
+        };
+        return std.fmt.allocPrint(scope.allocator, "{s} returned", .{text});
+    }
+    fn release(scope: ops.Scope) void {
+        gate.set(scope.runtime.io);
+    }
+};
+
+test "concurrent op completion wakes the loop without blocking JS timers" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    AsyncGateTest.canceled.store(false, .release);
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        a.decl("op_test_wait", AsyncGateTest.wait, .{}), ops.op("op_test_release", AsyncGateTest.release),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    rt.executeMainModule(gpa, "file:///async-gate.js",
+        \\const c = Deno.core;
+        \\let source = 'copied';
+        \\const pending = c.ops.op_test_wait({toString() { return source; }});
+        \\source = 'changed';
+        \\c.unrefOpPromise(pending); c.refOpPromise(pending);
+        \\let timerRan = false;
+        \\c.createTimer(() => { timerRan = true; c.ops.op_test_release(); }, 1, undefined, false, true, false);
+        \\const result = await pending;
+        \\if (!timerRan || result !== 'copied returned') throw new Error('worker completion');
+        \\await new Promise(resolve => c.createTimer(resolve, 1, undefined, false, true, false));
+    , &exception) catch |err| {
+        std.debug.print("{s}\n", .{exception orelse @errorName(err)});
+        return err;
+    };
+    try std.testing.expect(!AsyncGateTest.canceled.load(.acquire));
+}
+
+test "unrefed worker ops are canceled and joined during shutdown" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    AsyncGateTest.canceled.store(false, .release);
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{a.decl("op_test_wait", AsyncGateTest.wait, .{})} });
+    var alive = true;
+    defer if (alive) rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try std.testing.expectError(error.JsException, rt.executeMainModule(gpa, "file:///async-unref.js",
+        \\const pending = Array.from({length: 4}, () => Deno.core.ops.op_test_wait('never released'));
+        \\pending.forEach(p => Deno.core.unrefOpPromise(p));
+        \\await Promise.all(pending);
+    , &exception));
+    try std.testing.expectEqualStrings("Top-level await promise never resolved", exception.?);
+    try AsyncGateTest.entered.wait(std.testing.io);
+    rt.destroy(gpa);
+    alive = false;
+    try std.testing.expect(AsyncGateTest.canceled.load(.acquire));
+}
+
+test "native async ops read real files with owned string arguments" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn read(scope: a.AsyncScope, path: []const u8) ![]const u8 {
+            return std.Io.Dir.cwd().readFileAlloc(scope.io, path, scope.allocator, .unlimited);
+        }
+    };
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "async.txt", .data = "asynchronous file contents" });
+    const path = try tmp.dir.realPathFileAlloc(io, "async.txt", gpa);
+    defer gpa.free(path);
+    const rt = try JsRuntime.create(gpa, io, .{ .ops = &.{a.decl("op_test_read_file", F.read, .{})} });
+    defer rt.destroy(gpa);
+    try v8.setProperty(rt.isolate(), rt.context, v8.c.v8__Context__Global(rt.context), "filePath", @ptrCast(try v8.newString(rt.isolate(), path)));
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///async-file.js",
+        \\const text = await Deno.core.ops.op_test_read_file(filePath);
+        \\if (text !== 'asynchronous file contents') throw new Error('file read');
+        \\try {
+        \\  await Deno.core.ops.op_test_read_file(filePath + '.missing');
+        \\  throw new Error('missing file accepted');
+        \\} catch (e) { if (e.message !== 'FileNotFound') throw e; }
+    , &exception);
+}
+
+test "canceling one native op leaves other workers and promises live" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn cancel(scope: ops.Scope, id: i32) void {
+            scope.runtime.async_driver.cancel(id);
+        }
+    };
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    AsyncGateTest.canceled.store(false, .release);
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        a.decl("op_test_wait", AsyncGateTest.wait, .{}),
+        ops.op("op_test_release", AsyncGateTest.release),
+        ops.op("op_test_cancel", F.cancel),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///async-cancel.js",
+        \\const c = Deno.core;
+        \\const first = c.ops.op_test_wait('first');
+        \\const caught = first.catch(e => e.message);
+        \\const second = c.ops.op_test_wait('second');
+        \\c.ops.op_test_cancel(first[c.promiseIdSymbol]);
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\const values = await Promise.all([caught, second]);
+        \\if (values.join() !== 'Canceled,second returned') throw new Error('cancellation isolation');
+    , &exception);
+    try std.testing.expectEqual(@as(usize, 0), rt.async_driver.jobs.count());
+}
+
+test "unrefed op completion still wakes a loop kept alive by a timer" {
+    v8.initForTesting();
+    const a = @import("async_ops.zig");
+    const F = struct {
+        fn delayed(scope: a.AsyncScope, text: []const u8) ![]const u8 {
+            const result = try AsyncGateTest.wait(scope, text);
+            // Release from a JS timer, then finish in a later I/O turn.
+            try std.Io.sleep(scope.io, .{ .nanoseconds = 5 * std.time.ns_per_ms }, .awake);
+            return result;
+        }
+    };
+    AsyncGateTest.gate.reset();
+    AsyncGateTest.entered.reset();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{ .ops = &.{
+        a.decl("op_test_delayed", F.delayed, .{}), ops.op("op_test_release", AsyncGateTest.release),
+    } });
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    try rt.executeMainModule(gpa, "file:///async-unref-wake.js",
+        \\const c = Deno.core;
+        \\const pending = c.ops.op_test_delayed('unrefed');
+        \\c.unrefOpPromise(pending);
+        \\let blockerRan = false;
+        \\const blocker = c.createTimer(() => { blockerRan = true; }, 5000, undefined, false, true, false);
+        \\c.createTimer(() => c.ops.op_test_release(), 1, undefined, false, true, false);
+        \\const value = await pending;
+        \\if (blockerRan || value !== 'unrefed returned') throw new Error('completion slept behind refed timer');
+        \\c.cancelTimer(blocker);
     , &exception);
 }

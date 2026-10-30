@@ -14,7 +14,7 @@
 //!   into a JS string) or `*const v8.Value`, optionally as an error union. An
 //!   error is thrown as a JS `Error` named after it.
 //!
-//! Async ops, fast calls and op metrics come later.
+//! Async declarations live in `async_ops.zig`; fast calls and metrics follow.
 
 const std = @import("std");
 const v8 = @import("../v8/v8.zig");
@@ -24,6 +24,8 @@ const JsRuntime = @import("runtime.zig").JsRuntime;
 pub const OpDecl = struct {
     name: []const u8,
     callback: v8.FunctionCallback,
+    arg_count: usize = 0,
+    is_async: bool = false,
 };
 
 /// What an op gets to work with when it declares a leading `Scope` param.
@@ -87,7 +89,7 @@ fn Callback(comptime func: anytype) type {
 
 pub const ConvertError = error{ OutOfMemory, JsException };
 
-fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertError!T {
+pub fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertError!T {
     switch (T) {
         *const v8.Value => return value,
         bool => return c.v8__Value__BooleanValue(value, scope.isolate),
@@ -107,7 +109,7 @@ fn fromV8(comptime T: type, scope: Scope, value: *const v8.Value) ConvertError!T
     }
 }
 
-fn toV8(scope: Scope, value: anytype) ConvertError!?*const v8.Value {
+pub fn toV8(scope: Scope, value: anytype) ConvertError!?*const v8.Value {
     const T = @TypeOf(value);
     return switch (T) {
         void => null,
@@ -123,7 +125,7 @@ fn toV8(scope: Scope, value: anytype) ConvertError!?*const v8.Value {
 
 /// Throw a Zig error into JS. `error.JsException` means an exception is
 /// already pending; other errors become a JS error named after them.
-fn throwError(scope: Scope, err: anyerror) void {
+pub fn throwError(scope: Scope, err: anyerror) void {
     if (err == error.JsException) return;
     const message = v8.newString(scope.isolate, @errorName(err)) catch return;
     _ = c.v8__Isolate__ThrowException(scope.isolate, c.v8__Exception__Error(message));
@@ -152,8 +154,16 @@ pub fn throwCustomError(scope: Scope, class_name: []const u8, message: []const u
 /// Install `ops` on `Deno.core.ops`.
 pub fn install(scope: Scope, target: *const v8.Object, ops: []const OpDecl) v8.Error!void {
     for (ops) |decl| {
-        const f = try v8.newFunction(scope.context, decl.callback);
-        try v8.setProperty(scope.isolate, scope.context, target, decl.name, @ptrCast(f));
+        const f = c.v8__Function__New(scope.context, decl.callback, null, @intCast(decl.arg_count), .throw, .has_side_effect) orelse return error.JsException;
+        var value: *const v8.Value = @ptrCast(f);
+        if (decl.is_async) {
+            const deno = try v8.getProperty(scope.isolate, scope.context, c.v8__Context__Global(scope.context), "Deno");
+            const core = try v8.getProperty(scope.isolate, scope.context, @ptrCast(deno), "core");
+            const builder = try v8.getProperty(scope.isolate, scope.context, @ptrCast(core), "setUpAsyncStub");
+            const args = [_]*const v8.Value{ @ptrCast(try v8.newString(scope.isolate, decl.name)), value };
+            value = c.v8__Function__Call(@ptrCast(builder), scope.context, @ptrCast(c.v8__Undefined(scope.isolate)), 2, &args) orelse return error.JsException;
+        }
+        try v8.setProperty(scope.isolate, scope.context, target, decl.name, value);
     }
 }
 
