@@ -395,3 +395,52 @@ test "ES modules" {
         exception = null;
     }
 }
+
+test "core value predicates inspect V8 types without coercion" {
+    v8.initForTesting();
+    const gpa = std.testing.allocator;
+    const rt = try JsRuntime.create(gpa, std.testing.io, .{});
+    defer rt.destroy(gpa);
+    var exception: ?[]u8 = null;
+    defer if (exception) |e| gpa.free(e);
+    const result = try rt.executeScript(gpa, "types.js",
+        \\const core = Deno.core;
+        \\const pairs = [
+        \\ ["AnyArrayBuffer", new ArrayBuffer(0)], ["AnyArrayBuffer", new SharedArrayBuffer(0)],
+        \\ ["ArgumentsObject", (function() { return arguments; })()],
+        \\ ["ArrayBuffer", new ArrayBuffer(0)], ["ArrayBufferView", new DataView(new ArrayBuffer(0))],
+        \\ ["AsyncFunction", async function() {}], ["BigIntObject", Object(1n)],
+        \\ ["BooleanObject", new Boolean(false)], ["BoxedPrimitive", Object(Symbol())],
+        \\ ["BoxedPrimitive", new String("")], ["BoxedPrimitive", new Number(0)],
+        \\ ["BoxedPrimitive", Object(1n)], ["BoxedPrimitive", new Boolean(false)],
+        \\ ["DataView", new DataView(new ArrayBuffer(0))], ["Date", new Date()],
+        \\ ["GeneratorFunction", function*() {}], ["GeneratorObject", (function*() {})()],
+        \\ ["Map", new Map()], ["MapIterator", new Map().entries()],
+        \\ ["NativeError", new TypeError()], ["NumberObject", new Number(0)],
+        \\ ["Promise", Promise.resolve()], ["Proxy", new Proxy({}, {})],
+        \\ ["RegExp", /a/], ["Set", new Set()], ["SetIterator", new Set().values()],
+        \\ ["SharedArrayBuffer", new SharedArrayBuffer(0)], ["StringObject", new String("")],
+        \\ ["SymbolObject", Object(Symbol())], ["TypedArray", new Uint8Array(0)],
+        \\ ["WeakMap", new WeakMap()], ["WeakSet", new WeakSet()],
+        \\];
+        \\for (const [name, value] of pairs) {
+        \\  if (!core["is" + name](value)) throw new Error(name);
+        \\  for (const wrong of [undefined, null, false, 0, "", 1n, Symbol(), {}]) {
+        \\    if (core["is" + name](wrong)) throw new Error(name + " false positive");
+        \\  }
+        \\}
+        \\const fake = { [Symbol.toStringTag]: "Map", toString() { throw 1; } };
+        \\const {proxy, revoke} = Proxy.revocable({}, {}); revoke();
+        \\if (core.isMap(fake) || !core.isProxy(proxy) || core.isTypedArray(new DataView(new ArrayBuffer(0)))) throw 2;
+        \\const byteLength = core.ops.op_str_byte_length;
+        \\if (byteLength("aé😀\ud800") !== 10 || byteLength(fake) !== 0 || byteLength(new String("a")) !== 0) throw 3;
+        \\true
+    , &exception);
+    try std.testing.expect(v8.c.v8__Value__BooleanValue(result, rt.isolate()));
+
+    try rt.executeMainModule(gpa, "file:///types-module.js",
+        \\import * as namespace from 'ext:core/ops';
+        \\if (!Deno.core.isModuleNamespaceObject(namespace)) throw new Error('namespace');
+        \\if (!namespace.op_is_map(new Map())) throw new Error('synthetic export');
+    , &exception);
+}

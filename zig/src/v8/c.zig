@@ -216,3 +216,53 @@ pub extern fn v8__Promise__State(self: *const Promise) PromiseState;
 pub extern fn v8__Promise__Result(self: *const Promise) *const Value;
 pub extern fn v8__Promise__MarkAsHandled(self: *const Promise) void;
 pub extern fn v8__Value__IsPromise(self: *const Value) bool;
+
+pub extern fn v8__Value__IsArrayBuffer(self: *const Value) bool;
+
+pub extern fn v8__Value__IsSharedArrayBuffer(self: *const Value) bool;
+
+pub extern fn v8__Value__IsArgumentsObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsArrayBufferView(self: *const Value) bool;
+
+pub extern fn v8__Value__IsAsyncFunction(self: *const Value) bool;
+
+pub extern fn v8__Value__IsBigIntObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsBooleanObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsStringObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsNumberObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsSymbolObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsDataView(self: *const Value) bool;
+
+pub extern fn v8__Value__IsDate(self: *const Value) bool;
+
+pub extern fn v8__Value__IsGeneratorFunction(self: *const Value) bool;
+
+pub extern fn v8__Value__IsGeneratorObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsMap(self: *const Value) bool;
+
+pub extern fn v8__Value__IsMapIterator(self: *const Value) bool;
+
+pub extern fn v8__Value__IsModuleNamespaceObject(self: *const Value) bool;
+
+pub extern fn v8__Value__IsNativeError(self: *const Value) bool;
+
+pub extern fn v8__Value__IsProxy(self: *const Value) bool;
+
+pub extern fn v8__Value__IsRegExp(self: *const Value) bool;
+
+pub extern fn v8__Value__IsSet(self: *const Value) bool;
+
+pub extern fn v8__Value__IsSetIterator(self: *const Value) bool;
+
+pub extern fn v8__Value__IsTypedArray(self: *const Value) bool;
+
+pub extern fn v8__Value__IsWeakMap(self: *const Value) bool;
+
+pub extern fn v8__Value__IsWeakSet(self: *const Value) bool;
