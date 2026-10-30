@@ -103,6 +103,8 @@ pub extern fn v8__Isolate__GetCurrent() *Isolate;
 pub extern fn v8__Isolate__Enter(isolate: *Isolate) void;
 pub extern fn v8__Isolate__Exit(isolate: *Isolate) void;
 pub extern fn v8__Isolate__GetCurrentContext(isolate: *Isolate) *const Context;
+pub const MicrotasksPolicy = enum(c_int) { explicit = 0, scoped = 1, auto = 2 };
+pub extern fn v8__Isolate__SetMicrotasksPolicy(isolate: *Isolate, policy: MicrotasksPolicy) void;
 pub extern fn v8__Isolate__PerformMicrotaskCheckpoint(isolate: *Isolate) void;
 pub extern fn v8__Isolate__SetData(isolate: *Isolate, slot: u32, data: ?*anyopaque) void;
 pub extern fn v8__Isolate__GetData(isolate: *Isolate, slot: u32) ?*anyopaque;
