@@ -48,6 +48,11 @@ pub const Scope = struct {
     pub fn fail(self: Scope, exception: errors.JsError) error{OpError} {
         return self.error_context.?.fail(exception);
     }
+
+    /// Synchronous resource I/O shares this call's error context and arena.
+    pub fn ioScope(self: Scope) @import("io_scope.zig").IoScope {
+        return .{ .io = self.runtime.io, .allocator = self.arena, .error_context = self.error_context.? };
+    }
 };
 
 /// The isolate data slot holding the `*JsRuntime`.

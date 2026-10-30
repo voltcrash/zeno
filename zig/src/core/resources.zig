@@ -6,6 +6,7 @@
 const std = @import("std");
 pub const ByteView = @import("byte_view.zig").ByteView;
 pub const JsError = @import("errors.zig").JsError;
+pub const IoScope = @import("io_scope.zig").IoScope;
 
 pub const ResourceId = u32;
 pub const LookupError = error{BadResourceId};
@@ -17,14 +18,14 @@ const VTable = struct {
     name: *const fn (*Header) []const u8,
     close: *const fn (*Header) void,
     cancel_read: *const fn (*Header) void,
-    read: *const fn (*Header, std.Io, []u8) anyerror!usize,
-    read_chunk: *const fn (*Header, std.Io, std.mem.Allocator, usize) anyerror!ByteView,
-    write: *const fn (*Header, std.Io, []const u8) anyerror!usize,
-    write_error: *const fn (*Header, std.Io, JsError) anyerror!void,
-    read_sync: *const fn (*Header, std.Io, []u8) anyerror!usize,
-    write_sync: *const fn (*Header, std.Io, []const u8) anyerror!usize,
-    write_all: *const fn (*Header, std.Io, []const u8) anyerror!void,
-    shutdown: *const fn (*Header, std.Io) anyerror!void,
+    read: *const fn (*Header, IoScope, []u8) anyerror!usize,
+    read_chunk: *const fn (*Header, IoScope, usize) anyerror!ByteView,
+    write: *const fn (*Header, IoScope, []const u8) anyerror!usize,
+    write_error: *const fn (*Header, IoScope, JsError) anyerror!void,
+    read_sync: *const fn (*Header, IoScope, []u8) anyerror!usize,
+    write_sync: *const fn (*Header, IoScope, []const u8) anyerror!usize,
+    write_all: *const fn (*Header, IoScope, []const u8) anyerror!void,
+    shutdown: *const fn (*Header, IoScope) anyerror!void,
     size_hint: *const fn (*Header) SizeHint,
     destroy: *const fn (*Header) void,
 };
@@ -37,13 +38,13 @@ const Header = struct {
 /// An owning erased handle. Copies require `clone`; each owner calls `deinit`.
 /// T may provide name(*const T), close(*T), cancelReadOps(*T), and
 /// deinit(*T, Allocator). Only final release invokes deinit; close is explicit.
-/// Optional I/O methods take (*T, std.Io, buffer) and return !usize:
+/// Optional I/O methods take (*T, IoScope, buffer) and return !usize:
 /// read/readSync use []u8, write/writeSync use []const u8. writeAll takes
-/// []const u8 and returns !void; shutdown takes (*T, std.Io) and returns !void.
+/// []const u8 and returns !void; shutdown takes (*T, IoScope) and returns !void.
 /// sizeHint(*const T) returns SizeHint; it may be queried on an I/O worker.
-/// readChunk(*T, std.Io, Allocator, limit) returns an owned !ByteView. A
+/// readChunk(*T, IoScope, limit) returns an owned !ByteView. A
 /// resource can provide this instead of read, or override both paths.
-/// writeError(*T, std.Io, JsError) returns !void and borrows the error fields.
+/// writeError(*T, IoScope, JsError) returns !void and borrows the error fields.
 pub const Resource = struct {
     pub const ResourceType = void;
     header: *Header,
@@ -83,31 +84,31 @@ pub const Resource = struct {
     /// run on workers and must synchronize their own state; refcounts and
     /// close hooks remain on the runtime thread. Use cancellable std.Io
     /// waits/locks so runtime shutdown can join blocked operations.
-    pub fn read(self: Resource, io: std.Io, data: []u8) !usize {
-        return self.header.vtable.read(self.header, io, data);
+    pub fn read(self: Resource, scope: IoScope, data: []u8) !usize {
+        return self.header.vtable.read(self.header, scope, data);
     }
     /// Read an owned chunk with at most limit bytes. Native pipes pass this
     /// view directly to a sink; BYOB-only resources allocate their own chunk.
-    pub fn readChunk(self: Resource, io: std.Io, gpa: std.mem.Allocator, limit: usize) !ByteView {
-        return self.header.vtable.read_chunk(self.header, io, gpa, limit);
+    pub fn readChunk(self: Resource, scope: IoScope, limit: usize) !ByteView {
+        return self.header.vtable.read_chunk(self.header, scope, limit);
     }
-    pub fn write(self: Resource, io: std.Io, data: []const u8) !usize {
-        return self.header.vtable.write(self.header, io, data);
+    pub fn write(self: Resource, scope: IoScope, data: []const u8) !usize {
+        return self.header.vtable.write(self.header, scope, data);
     }
-    pub fn writeError(self: Resource, io: std.Io, exception: JsError) !void {
-        return self.header.vtable.write_error(self.header, io, exception);
+    pub fn writeError(self: Resource, scope: IoScope, exception: JsError) !void {
+        return self.header.vtable.write_error(self.header, scope, exception);
     }
-    pub fn readSync(self: Resource, io: std.Io, data: []u8) !usize {
-        return self.header.vtable.read_sync(self.header, io, data);
+    pub fn readSync(self: Resource, scope: IoScope, data: []u8) !usize {
+        return self.header.vtable.read_sync(self.header, scope, data);
     }
-    pub fn writeSync(self: Resource, io: std.Io, data: []const u8) !usize {
-        return self.header.vtable.write_sync(self.header, io, data);
+    pub fn writeSync(self: Resource, scope: IoScope, data: []const u8) !usize {
+        return self.header.vtable.write_sync(self.header, scope, data);
     }
-    pub fn writeAll(self: Resource, io: std.Io, data: []const u8) !void {
-        return self.header.vtable.write_all(self.header, io, data);
+    pub fn writeAll(self: Resource, scope: IoScope, data: []const u8) !void {
+        return self.header.vtable.write_all(self.header, scope, data);
     }
-    pub fn shutdown(self: Resource, io: std.Io) !void {
-        return self.header.vtable.shutdown(self.header, io);
+    pub fn shutdown(self: Resource, scope: IoScope) !void {
+        return self.header.vtable.shutdown(self.header, scope);
     }
     pub fn sizeHint(self: Resource) SizeHint {
         return self.header.vtable.size_hint(self.header);
@@ -177,19 +178,19 @@ fn Impl(comptime T: type) type {
         fn cancelRead(h: *Header) void {
             if (@hasDecl(T, "cancelReadOps")) node(h).value.cancelReadOps();
         }
-        fn read(h: *Header, io: std.Io, data: []u8) !usize {
-            if (@hasDecl(T, "read")) return node(h).value.read(io, data);
+        fn read(h: *Header, scope: IoScope, data: []u8) !usize {
+            if (@hasDecl(T, "read")) return node(h).value.read(scope, data);
             if (@hasDecl(T, "readChunk")) {
-                var chunk = try readChunk(h, io, std.heap.smp_allocator, data.len);
+                var chunk = try readChunk(h, scope, data.len);
                 defer chunk.deinit();
                 @memcpy(data[0..chunk.len()], chunk.bytes());
                 return chunk.len();
             }
             return error.NotSupported;
         }
-        fn readChunk(h: *Header, io: std.Io, gpa: std.mem.Allocator, limit: usize) !ByteView {
+        fn readChunk(h: *Header, scope: IoScope, limit: usize) !ByteView {
             if (@hasDecl(T, "readChunk")) {
-                var chunk = try node(h).value.readChunk(io, gpa, limit);
+                var chunk = try node(h).value.readChunk(scope, limit);
                 if (chunk.len() > limit) {
                     chunk.deinit();
                     return error.InvalidReadCount;
@@ -197,43 +198,43 @@ fn Impl(comptime T: type) type {
                 return chunk;
             }
             if (@hasDecl(T, "read")) {
-                var chunk = try ByteView.alloc(gpa, limit);
+                var chunk = try ByteView.alloc(scope.buffer_allocator, limit);
                 errdefer chunk.deinit();
-                const n = try node(h).value.read(io, chunk.mutableBytes());
+                const n = try node(h).value.read(scope, chunk.mutableBytes());
                 if (n > limit) return error.InvalidReadCount;
                 chunk.truncate(n);
                 return chunk;
             }
             return error.NotSupported;
         }
-        fn write(h: *Header, io: std.Io, data: []const u8) !usize {
-            if (@hasDecl(T, "write")) return node(h).value.write(io, data);
+        fn write(h: *Header, scope: IoScope, data: []const u8) !usize {
+            if (@hasDecl(T, "write")) return node(h).value.write(scope, data);
             return error.NotSupported;
         }
-        fn writeError(h: *Header, io: std.Io, exception: JsError) !void {
-            if (@hasDecl(T, "writeError")) return node(h).value.writeError(io, exception);
+        fn writeError(h: *Header, scope: IoScope, exception: JsError) !void {
+            if (@hasDecl(T, "writeError")) return node(h).value.writeError(scope, exception);
             return error.NotSupported;
         }
-        fn readSync(h: *Header, io: std.Io, data: []u8) !usize {
-            if (@hasDecl(T, "readSync")) return node(h).value.readSync(io, data);
+        fn readSync(h: *Header, scope: IoScope, data: []u8) !usize {
+            if (@hasDecl(T, "readSync")) return node(h).value.readSync(scope, data);
             return error.NotSupported;
         }
-        fn writeSync(h: *Header, io: std.Io, data: []const u8) !usize {
-            if (@hasDecl(T, "writeSync")) return node(h).value.writeSync(io, data);
+        fn writeSync(h: *Header, scope: IoScope, data: []const u8) !usize {
+            if (@hasDecl(T, "writeSync")) return node(h).value.writeSync(scope, data);
             return error.NotSupported;
         }
-        fn writeAll(h: *Header, io: std.Io, data: []const u8) !void {
-            if (@hasDecl(T, "writeAll")) return node(h).value.writeAll(io, data);
+        fn writeAll(h: *Header, scope: IoScope, data: []const u8) !void {
+            if (@hasDecl(T, "writeAll")) return node(h).value.writeAll(scope, data);
             var offset: usize = 0;
             while (offset < data.len) {
-                const n = try write(h, io, data[offset..]);
+                const n = try write(h, scope, data[offset..]);
                 if (n == 0) return error.WriteZero;
                 if (n > data.len - offset) return error.InvalidWriteCount;
                 offset += n;
             }
         }
-        fn shutdown(h: *Header, io: std.Io) !void {
-            if (@hasDecl(T, "shutdown")) return node(h).value.shutdown(io);
+        fn shutdown(h: *Header, scope: IoScope) !void {
+            if (@hasDecl(T, "shutdown")) return node(h).value.shutdown(scope);
             return error.NotSupported;
         }
         fn sizeHint(h: *Header) SizeHint {
@@ -315,11 +316,18 @@ pub const ResourceTable = struct {
     }
 };
 
+const TestIo = struct {
+    error_context: @import("errors.zig").Context = .{},
+    fn scope(self: *TestIo, gpa: std.mem.Allocator) IoScope {
+        return .{ .io = std.testing.io, .allocator = gpa, .buffer_allocator = gpa, .error_context = &self.error_context };
+    }
+};
+
 const TestCounts = struct { closes: usize = 0, cancels: usize = 0, drops: usize = 0 };
 
 const TestChunkSource = struct {
     pending: ByteView,
-    pub fn readChunk(self: *@This(), _: std.Io, _: std.mem.Allocator, limit: usize) !ByteView {
+    pub fn readChunk(self: *@This(), _: IoScope, limit: usize) !ByteView {
         return self.pending.splitTo(@min(limit, self.pending.len()));
     }
     pub fn deinit(self: *@This(), _: std.mem.Allocator) void {
@@ -329,7 +337,8 @@ const TestChunkSource = struct {
 
 test "source-owned chunks retain the source allocation and support BYOB fallback" {
     const gpa = std.testing.allocator;
-    const io = std.testing.io;
+    var test_io: TestIo = .{};
+    const io = test_io.scope(gpa);
     var retained: ByteView = .empty;
     defer retained.deinit();
     {
@@ -342,7 +351,7 @@ test "source-owned chunks retain the source allocation and support BYOB fallback
         const held = try resource.downcast(TestChunkSource);
         defer held.deinit();
         const address = @intFromPtr(held.ptr().pending.bytes().ptr);
-        retained = try resource.readChunk(io, gpa, 6);
+        retained = try resource.readChunk(io, 6);
         try std.testing.expectEqual(address, @intFromPtr(retained.bytes().ptr));
         var buffer: [32]u8 = undefined;
         const n = try resource.read(io, &buffer);
@@ -355,15 +364,16 @@ test "source-owned chunks retain the source allocation and support BYOB fallback
 
 fn chunkAllocationFailureExercise(gpa: std.mem.Allocator) !void {
     const Reader = struct {
-        pub fn read(_: *@This(), _: std.Io, data: []u8) !usize {
+        pub fn read(_: *@This(), _: IoScope, data: []u8) !usize {
             const n = @min(data.len, 3);
             @memcpy(data[0..n], "abc"[0..n]);
             return n;
         }
     };
+    var test_io: TestIo = .{};
     const resource = try Resource.create(gpa, Reader, .{});
     defer resource.deinit();
-    var chunk = try resource.readChunk(std.testing.io, gpa, 8);
+    var chunk = try resource.readChunk(test_io.scope(gpa), 8);
     defer chunk.deinit();
     try std.testing.expectEqualStrings("abc", chunk.bytes());
 }
@@ -371,43 +381,46 @@ fn chunkAllocationFailureExercise(gpa: std.mem.Allocator) !void {
 test "BYOB resources allocate chunks and release failed read allocations" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, chunkAllocationFailureExercise, .{});
     const Failing = struct {
-        pub fn read(_: *@This(), _: std.Io, _: []u8) !usize {
+        pub fn read(_: *@This(), _: IoScope, _: []u8) !usize {
             return error.ReadFailure;
         }
     };
+    var test_io: TestIo = .{};
     const resource = try Resource.create(std.testing.allocator, Failing, .{});
     defer resource.deinit();
-    try std.testing.expectError(error.ReadFailure, resource.readChunk(std.testing.io, std.testing.allocator, 1024));
+    try std.testing.expectError(error.ReadFailure, resource.readChunk(test_io.scope(std.testing.allocator), 1024));
 }
 
 test "chunk overrides take priority and invalid counts release the chunk" {
     const Override = struct {
-        pub fn read(_: *@This(), _: std.Io, _: []u8) !usize {
+        pub fn read(_: *@This(), _: IoScope, _: []u8) !usize {
             return error.ByobOverride;
         }
-        pub fn readChunk(_: *@This(), _: std.Io, gpa: std.mem.Allocator, _: usize) !ByteView {
-            return ByteView.copy(gpa, "chunk override");
+        pub fn readChunk(_: *@This(), scope: IoScope, _: usize) !ByteView {
+            return ByteView.copy(scope.buffer_allocator, "chunk override");
         }
     };
     const gpa = std.testing.allocator;
+    var test_io: TestIo = .{};
     const resource = try Resource.create(gpa, Override, .{});
     defer resource.deinit();
-    var chunk = try resource.readChunk(std.testing.io, gpa, 32);
+    var chunk = try resource.readChunk(test_io.scope(gpa), 32);
     defer chunk.deinit();
     try std.testing.expectEqualStrings("chunk override", chunk.bytes());
     var data: [32]u8 = undefined;
-    try std.testing.expectError(error.ByobOverride, resource.read(std.testing.io, &data));
-    try std.testing.expectError(error.InvalidReadCount, resource.readChunk(std.testing.io, gpa, 1));
+    try std.testing.expectError(error.ByobOverride, resource.read(test_io.scope(gpa), &data));
+    try std.testing.expectError(error.InvalidReadCount, resource.readChunk(test_io.scope(gpa), 1));
 }
 
 test "I/O defaults and partial write-all follow resource contracts" {
     const gpa = std.testing.allocator;
-    const io = std.testing.io;
+    var test_io: TestIo = .{};
+    const io = test_io.scope(gpa);
     const empty = try Resource.create(gpa, struct {}, .{});
     defer empty.deinit();
     var data: [8]u8 = undefined;
     try std.testing.expectError(error.NotSupported, empty.read(io, &data));
-    try std.testing.expectError(error.NotSupported, empty.readChunk(io, gpa, data.len));
+    try std.testing.expectError(error.NotSupported, empty.readChunk(io, data.len));
     try std.testing.expectError(error.NotSupported, empty.readSync(io, &data));
     try std.testing.expectError(error.NotSupported, empty.write(io, "x"));
     try std.testing.expectError(error.NotSupported, empty.writeError(io, JsError.typeError("stream error")));
@@ -419,7 +432,7 @@ test "I/O defaults and partial write-all follow resource contracts" {
         output: [8]u8 = undefined,
         len: usize = 0,
         calls: usize = 0,
-        pub fn write(self: *@This(), _: std.Io, bytes: []const u8) !usize {
+        pub fn write(self: *@This(), _: IoScope, bytes: []const u8) !usize {
             const n = @min(bytes.len, 2);
             @memcpy(self.output[self.len..][0..n], bytes[0..n]);
             self.len += n;
@@ -441,7 +454,7 @@ test "I/O defaults and partial write-all follow resource contracts" {
 test "resources receive typed native error descriptions and propagate write failures" {
     const Receiver = struct {
         calls: usize = 0,
-        pub fn writeError(self: *@This(), _: std.Io, exception: JsError) !void {
+        pub fn writeError(self: *@This(), _: IoScope, exception: JsError) !void {
             try std.testing.expectEqualStrings("TypeError", exception.class_name);
             if (std.mem.eql(u8, exception.message, "reject")) return error.WriteFailure;
             try std.testing.expectEqualStrings("stream failure", exception.message);
@@ -449,10 +462,11 @@ test "resources receive typed native error descriptions and propagate write fail
         }
     };
     const gpa = std.testing.allocator;
+    var test_io: TestIo = .{};
     const resource = try Resource.create(gpa, Receiver, .{});
     defer resource.deinit();
-    try resource.writeError(std.testing.io, JsError.typeError("stream failure"));
-    try std.testing.expectError(error.WriteFailure, resource.writeError(std.testing.io, JsError.typeError("reject")));
+    try resource.writeError(test_io.scope(gpa), JsError.typeError("stream failure"));
+    try std.testing.expectError(error.WriteFailure, resource.writeError(test_io.scope(gpa), JsError.typeError("reject")));
     const held = try resource.downcast(Receiver);
     defer held.deinit();
     try std.testing.expectEqual(@as(usize, 1), held.ptr().calls);
@@ -460,9 +474,10 @@ test "resources receive typed native error descriptions and propagate write fail
 
 test "write-all handles zero progress, native errors and overrides" {
     const gpa = std.testing.allocator;
-    const io = std.testing.io;
+    var test_io: TestIo = .{};
+    const io = test_io.scope(gpa);
     const Zero = struct {
-        pub fn write(_: *@This(), _: std.Io, _: []const u8) !usize {
+        pub fn write(_: *@This(), _: IoScope, _: []const u8) !usize {
             return 0;
         }
     };
@@ -470,7 +485,7 @@ test "write-all handles zero progress, native errors and overrides" {
     defer zero.deinit();
     try std.testing.expectError(error.WriteZero, zero.writeAll(io, "x"));
     const Failure = struct {
-        pub fn write(_: *@This(), _: std.Io, _: []const u8) !usize {
+        pub fn write(_: *@This(), _: IoScope, _: []const u8) !usize {
             return error.BrokenPipe;
         }
     };
@@ -478,7 +493,7 @@ test "write-all handles zero progress, native errors and overrides" {
     defer failure.deinit();
     try std.testing.expectError(error.BrokenPipe, failure.writeAll(io, "x"));
     const Override = struct {
-        pub fn writeAll(_: *@This(), _: std.Io, bytes: []const u8) !void {
+        pub fn writeAll(_: *@This(), _: IoScope, bytes: []const u8) !void {
             if (!std.mem.eql(u8, bytes, "optimized")) return error.WrongBuffer;
         }
     };

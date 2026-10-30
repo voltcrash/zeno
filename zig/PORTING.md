@@ -73,6 +73,7 @@ have no V8 for now.
 | `src/core/async_cancel.zig`    | `libs/core/async_cancel.rs` cancel handle        |
 | `src/core/pipe_cancel.zig`     | `libs/core/ops_builtin.rs` pipe cancellation     |
 | `src/core/errors.zig`          | `deno_error::JsErrorClass`, `libs/core/error.rs` |
+| `src/core/io_scope.zig`        | native resource I/O / `deno_error::JsErrorBox`   |
 | `src/core/buffers.zig`         | `libs/core/runtime/ops.rs`, `serde_v8::V8Slice`  |
 | `src/core/modules.zig`         | `libs/core/modules` (`ModuleMap`)                |
 | `src/core/url.zig`             | `resolve_import` (interim URL handling)          |
@@ -204,6 +205,15 @@ have no V8 for now.
   message fallback; existing async stub stack handling is retained. Metadata
   allocation failures still produce a JS error. `core.writeTypeError` sends a
   borrowed native TypeError description to a resource's `writeError` method.
+
+- **Resource I/O errors:** resource methods receive a native `IoScope` with I/O,
+  allocation and error context. Sync methods share the calling op's error
+  context; async methods share its worker context. Backend class, message and
+  additional properties survive BYOB/chunk adapters, read-all, partial writes,
+  shutdown, error writes and native pipes. Error fields use the op arena; owned
+  chunks and read-all results use a separate buffer allocator so they can be
+  released independently, including during long-running pipes. Concrete OS error
+  mapping and runtime stdio registration still follow.
 
 - **Buffer/resource bindings:** sync and async native ops accept typed resource
   handles and retained backing-store ranges. Buffer input modes mirror op2's

@@ -13,18 +13,7 @@ pub const Scheduling = enum { eager, deferred, lazy };
 /// futures. Concurrent bodies use std.Io and never receive V8 handles.
 pub const Execution = enum { inline_ready, concurrent };
 pub const Options = struct { scheduling: Scheduling = .eager, execution: Execution = .concurrent };
-pub const AsyncScope = struct {
-    io: std.Io,
-    /// Per-op arena; allocate returned strings here, or return a static/input
-    /// slice. Results remain valid until conversion on the runtime thread.
-    allocator: std.mem.Allocator,
-    error_context: *errors.Context,
-
-    /// Error fields follow the same arena/input lifetime rules as results.
-    pub fn fail(self: AsyncScope, exception: errors.JsError) error{OpError} {
-        return self.error_context.fail(exception);
-    }
-};
+pub const AsyncScope = @import("io_scope.zig").IoScope;
 const Mapped = struct { value: *const v8.Value, is_ok: bool };
 const Job = struct {
     driver: *Driver,
